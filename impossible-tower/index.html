@@ -1,0 +1,1396 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Impossible Tower</title>
+<link rel="icon" href="data:," />
+<link rel="stylesheet" href="../shared/dolphin.css" />
+<style>
+  html, body { overflow: hidden; background: #D3ECF8; }
+  body { color: var(--ink); }
+  #scene { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; touch-action: none; }
+
+  /* Type: 16 label (display face), 13 small (body face). Spacing on an 8px rhythm. */
+  .hud { position: fixed; top: 24px; left: 24px; z-index: 20; pointer-events: none; opacity: 0; transition: opacity 600ms ease; }
+  .hud.show { opacity: 1; }
+  .hud .l1 { font-family: var(--font-head); font-size: 16px; line-height: 24px; color: var(--ink); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .hud .l2 { font: 700 13px/16px var(--font-body); color: var(--muted); font-variant-numeric: tabular-nums; }
+
+  .tip {
+    position: fixed; left: 0; top: 0; z-index: 25; pointer-events: none; width: max-content; max-width: 240px;
+    background: var(--foam); color: var(--ink); border: 2px solid var(--mist); border-radius: 16px;
+    box-shadow: 0 3px 0 rgba(10, 35, 79, 0.1); padding: 8px 16px;
+    opacity: 0; transition: opacity 120ms ease-out;
+  }
+  .tip.show { opacity: 1; }
+  .tip .d { display: flex; align-items: center; gap: 8px; font: 700 13px/16px var(--font-body); color: var(--muted); }
+  .tip .d i { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .tip .t { font-family: var(--font-head); font-size: 16px; line-height: 20px; margin-top: 4px; }
+  .tip .m { font: 700 13px/16px var(--font-body); color: var(--muted); margin-top: 4px; }
+
+  .hint {
+    position: fixed; left: 50%; bottom: 80px; transform: translate(-50%, 8px); z-index: 30; pointer-events: none;
+    white-space: nowrap; font: 700 13px/16px var(--font-body); color: var(--ink);
+    opacity: 0; transition: opacity 400ms ease-out, transform 400ms cubic-bezier(.2, .8, .2, 1);
+  }
+  .hint.show { opacity: 0.8; transform: translate(-50%, 0); }
+
+  .home-pill {
+    position: fixed; top: 24px; left: 50%; z-index: 21; --tx: -50%;
+    height: 40px; padding: 0 16px 0 12px; border-radius: 20px; font: 700 13px/1 var(--font-body); cursor: pointer;
+    display: flex; align-items: center; gap: 8px; background: var(--foam); color: var(--ink); border: 2px solid var(--mist);
+    box-shadow: 0 3px 0 var(--chrome-shadow); opacity: 0; transform: translate(var(--tx), -8px); pointer-events: none;
+    transition: opacity 200ms cubic-bezier(.2, .8, .2, 1), transform 240ms cubic-bezier(.2, .8, .2, 1);
+  }
+  .home-pill.show { opacity: 1; transform: translate(var(--tx), 0); pointer-events: auto; }
+  .home-pill.show:active { transform: translate(var(--tx), 3px); box-shadow: none; }
+  .home-pill svg { width: 16px; height: 16px; transition: transform 200ms ease; }
+  .home-pill.down svg { transform: rotate(180deg); }
+
+  /* The gate sits over a pale sky, so it takes dark ink instead of the default white. */
+  .kg-gate { color: var(--ink); }
+  .kg-gate .kg-eyebrow { opacity: 0.7; }
+
+  @media (max-width: 640px) {
+    .hud { top: 16px; left: 16px; }
+    .home-pill { left: auto; right: 16px; top: 16px; --tx: 0px; }
+    .tip { max-width: 208px; }
+    .hint { bottom: 120px; }
+  }
+  @media (prefers-reduced-motion: reduce) { .tip, .hud, .hint, .home-pill { transition: none; } }
+</style>
+</head>
+<body>
+<canvas id="scene" role="img" aria-label="An isometric tower of SAT topics. Each tier is a topic and each step on its staircase is a lesson. Built tiers sit below you; three paths branch from your tier, and the pale tiers above are not built yet. Point toward a path to connect it, then click its glowing step. Arrow keys also work."></canvas>
+<header class="hud" id="hud" aria-live="polite"><div class="l1" id="hudL1"></div><div class="l2" id="hudL2"></div></header>
+<div class="tip" id="tip" role="tooltip"></div>
+<div class="hint" id="hint" aria-live="polite"></div>
+<button class="home-pill" id="homePill" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg><span>Back to your tier</span></button>
+
+<script type="module">
+// ─── Sound design (for whoever sources the audio; every cue fires on its visual, never at random) ───
+// Music: serene, meditative, spacious. A slow warm pad with sparse felt-piano or kalimba notes in
+//   Lydian, ~60 bpm, long soft reverb, lots of air between notes. score.setIntensity follows how high
+//   you are looking: ~0.18 at the foot of the tower, rising gently to ~0.4 near the summit (a second
+//   pad voice and a slow high bell figure join). The intro assembly swells from near-silence to a soft
+//   bloom and must never turn into drums.
+// hover   : pointer reaches a step, a tier or the summit. One soft wooden "tok", very short, no tail.
+// select  : a lesson card opens. Two clear chime notes a fifth apart, gentle attack.
+// back    : card closed, or Esc brings the camera home. The same chime, descending and quieter.
+// start   : lesson begins. A low breathy swell (a bowed bell) that resolves upward.
+// complete: lesson mastered; the glowing step turns to stone. A warm resonant bell over a soft stone settle.
+// unlock  : a new step lights or a new path slides into reach. A rising three-note harp or kalimba figure.
+// intro   : the figure arrives on your tier after the assembly. A wide soft bloom (low pad + high shimmer), not a hit.
+// riser   : the 2.2 s build into that arrival. An airy pad swell with a soft reversed cymbal.
+// step    : two uses. (1) Architecture: a short smooth stone grind ending in a wooden "clunk" when a
+//           platform locks into place (tiers landing, the turntable connecting a path). (2) The figure's
+//           footstep: a light, dry tap on stone, slightly varied.
+// zoomIn / zoomOut: unused; this view never zooms.
+// A placeholder kit matching these notes is synthesized into ./audio (bed.wav loops seamlessly); swap files 1:1.
+//
+// Impossible Tower: an isometric tower where every tier is a topic and every step a lesson (ordered by rung).
+// Built tiers below you are solid; from your tier a turntable connects one of up to three branching
+// staircases (the frontier); tiers above are pale, not yet built. Point toward a path and the turntable
+// rotates to connect it. Click its glowing step to open the lesson card; finishing it walks you up.
+// QA params: ?skipgate=1  &t=<sec> (jump into the intro; 99 = settled)  &demo=hover|shift|complete|top
+//            &px=<0-1>&py=<0-1> (park a virtual mouse)  &notrans=1 (freeze CSS transitions)  &debug=1
+import { createGraph, DOMAIN_HUES, clamp } from '../shared/graph.js';
+import { mountChrome, params } from '../shared/chrome.js';
+import { createLessonCard } from '../shared/lesson-card.js';
+
+// ═══════════════════════ Utilities ═══════════════════════
+const TAU = Math.PI * 2;
+const lerp = (a, b, t) => a + (b - a) * t;
+const smooth = (e0, e1, x) => { const t = clamp((x - e0) / (e1 - e0), 0, 1); return t * t * (3 - 2 * t); };
+const easeOut = (u) => 1 - Math.pow(1 - u, 3);
+const easeInOut = (u) => (u < 0.5 ? 4 * u * u * u : 1 - Math.pow(-2 * u + 2, 3) / 2);
+const easeOutBack = (u) => { const c1 = 1.25, c3 = c1 + 1; return 1 + c3 * Math.pow(u - 1, 3) + c1 * Math.pow(u - 1, 2); };
+const hex = (h) => { h = h.trim(); return [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)]; };
+const mixc = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+const rgb = (c) => `rgb(${c[0] | 0},${c[1] | 0},${c[2] | 0})`;
+const rgba = (c, a) => `rgba(${c[0] | 0},${c[1] | 0},${c[2] | 0},${a})`;
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const clock = () => performance.now();
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+if (params.has('notrans')) {
+  const st = document.createElement('style'); st.textContent = '*, *::before, *::after { transition: none !important; animation: none !important; }'; document.head.append(st);
+}
+
+// ═══════════════════════ Palette (soft pastel takes on the Dolphin tokens) ═══════════════════════
+const HUE = Object.fromEntries(Object.entries(DOMAIN_HUES).map(([k, v]) => [k, hex(v)]));
+const FOAM = hex('#FFFFFC'), INK = hex('#0A234F');
+// Sandstone: top / lit left face (+y) / shaded right face (+x). Light comes from the upper left.
+const STONE = { top: [255, 253, 247], left: [239, 232, 222], right: [217, 205, 190] };
+const KEEL = { top: [246, 239, 229], left: [231, 222, 209], right: [207, 194, 178] };
+const SUN = { top: [255, 241, 112], left: [249, 216, 66], right: [231, 186, 24] };
+const LIT_TOP = [255, 247, 214];
+const GOLD = { top: [255, 230, 160], left: [247, 204, 120], right: [226, 172, 86] }; // the summit gateway
+const MINT = HUE['Problem Solving & Data'];
+const palCache = new Map();
+function tierPal(h) {
+  const k = 't' + h.join();
+  if (!palCache.has(k)) palCache.set(k, { left: mixc(STONE.left, h, 0.44), right: mixc(mixc(STONE.right, h, 0.52), INK, 0.06) });
+  return palCache.get(k);
+}
+function stepPal(h) {
+  const k = 's' + h.join();
+  if (!palCache.has(k)) palCache.set(k, { top: STONE.top, left: mixc(STONE.left, h, 0.22), right: mixc(STONE.right, h, 0.34) });
+  return palCache.get(k);
+}
+const FOUND_BAND = tierPal(MINT);
+const GROUND = { top: mixc(STONE.top, MINT, 0.2), left: mixc(STONE.left, MINT, 0.3), right: mixc(STONE.right, MINT, 0.38) };
+
+// Sky: cool blue above, a warm foam haze near the base. Shifts slightly cooler as you look up the tower.
+let skyAlt = 0;
+function skyStops() {
+  const a = clamp(skyAlt, 0, 1);
+  return [mixc([164, 214, 243], [140, 198, 238], a), mixc([206, 236, 251], [188, 226, 249], a), mixc([255, 243, 228], [226, 242, 251], a)];
+}
+let SKY = skyStops();
+function skyAtY(sy) {
+  const f = clamp(sy / VH, 0, 1);
+  return f < 0.55 ? mixc(SKY[0], SKY[1], f / 0.55) : mixc(SKY[1], SKY[2], (f - 0.55) / 0.45);
+}
+
+// ═══════════════════════ Data ═══════════════════════
+const graph = createGraph();
+const isGroup = (n) => n.children.length > 0 && n.children.every((c) => !c.children.length);
+const TOPICS = graph.nodes.filter(isGroup).map((n) => ({
+  id: n.id, label: n.label, domain: n.domain.label, di: n.domainIndex, hue: HUE[n.domain.label],
+  lessons: [...n.children].sort((a, b) => a.rung - b.rung),
+}));
+const topicOf = new Map();
+TOPICS.forEach((t) => t.lessons.forEach((l) => topicOf.set(l.id, t)));
+let stats = graph.stats();
+// Shown state can lag the graph a beat so a newly ready step lights when the figure gets there.
+const holds = new Map();
+const stateOf = (l) => holds.get(l.id) ?? l.state;
+const masteredIn = (t) => t.lessons.filter((l) => stateOf(l) === 'mastered').length;
+
+// The plan: built topics (the path below you), up to three branching options from your tier, the rest queued above.
+// Options keep their slot between plans so nothing jumps around after a completion.
+function computePlan(prev) {
+  const isDone = (t) => t.lessons.every((l) => stateOf(l) === 'mastered');
+  const hasFront = (t) => t.lessons.some((l) => stateOf(l) === 'frontier');
+  const prog = (t) => masteredIn(t) / t.lessons.length;
+  const last = (t) => Math.max(0, ...t.lessons.map((l) => (l.masteredAt ? +l.masteredAt : 0)));
+  const prevDone = prev ? prev.done.filter(isDone) : [];
+  const done = [...prevDone, ...TOPICS.filter((t) => isDone(t) && !prevDone.includes(t)).sort((a, b) => last(a) - last(b) || a.id - b.id)];
+  const active = TOPICS.filter((t) => !isDone(t) && hasFront(t)).sort((a, b) => prog(b) - prog(a) || a.di - b.di || a.id - b.id);
+  const locked = TOPICS.filter((t) => !isDone(t) && !hasFront(t)).sort((a, b) => a.di - b.di || a.id - b.id);
+  // Two branches, both rising away from the camera, so every step of both stays in view.
+  const slots = [null, null];
+  if (prev) for (const o of prev.options) if (active.includes(o.topic) && o.slot < slots.length) slots[o.slot] = o.topic;
+  for (let s = 0; s < slots.length; s++) {
+    if (slots[s]) continue;
+    const used = new Set(slots.filter(Boolean).map((t) => t.domain));
+    slots[s] = active.find((t) => !slots.includes(t) && !used.has(t.domain)) || active.find((t) => !slots.includes(t)) || null;
+  }
+  const options = slots.map((topic, slot) => (topic ? { topic, slot } : null)).filter(Boolean);
+  const queue = [...active.filter((t) => !slots.includes(t)), ...locked];
+  return { done, options, queue };
+}
+
+// ═══════════════════════ Layout (world units: 1 = one cell; z up; a step is 0.5 deep and 0.5 high) ═══════════════════════
+const ANG = { '+x': 0, '+y': Math.PI / 2, '-x': Math.PI, '-y': -Math.PI / 2 };
+const DV = { '+x': [1, 0], '+y': [0, 1], '-x': [-1, 0], '-y': [0, -1] };
+const OPP = { '-x': '+x', '+x': '-x', '-y': '+y', '+y': '-y' };
+const dirOf = (i) => (((i % 2) + 2) % 2 === 0 ? '-x' : '-y');
+
+function flight(from, dir, gap, n) {
+  const steps = [];
+  const { x: ax, y: ay, z: za } = from;
+  for (let k = 1; k <= n; k++) {
+    const a = gap + 0.5 * (k - 1), b = gap + 0.5 * k, t = za + 0.5 * k;
+    let g;
+    if (dir === '-x') g = { x0: ax - b, x1: ax - a, y0: ay + 0.5, y1: ay + 1.5 };
+    else if (dir === '+x') g = { x0: ax + 2 + a, x1: ax + 2 + b, y0: ay + 0.5, y1: ay + 1.5 };
+    else if (dir === '-y') g = { x0: ax + 0.5, x1: ax + 1.5, y0: ay - b, y1: ay - a };
+    else g = { x0: ax + 0.5, x1: ax + 1.5, y0: ay + 2 + a, y1: ay + 2 + b };
+    g.z0 = t - 1; g.z1 = t;
+    steps.push(g);
+  }
+  const d = gap + 0.5 * n;
+  let x = ax, y = ay;
+  if (dir === '-x') x = ax - d - 2; else if (dir === '+x') x = ax + 2 + d; else if (dir === '-y') y = ay - d - 2; else y = ay + 2 + d;
+  return { steps, plat: { x, y, z: za + 0.5 * (n + 1) } };
+}
+
+const COL_H = 2.4; // each tier stands on a slender column that fades into the haze below
+function buildLayout(pl) {
+  const L = { specs: new Map(), tiers: [], byTopic: new Map(), options: [], hubTier: null, summit: null, D: pl.done.length };
+  const add = (id, s) => L.specs.set(id, { id, ...s });
+  const addTier = (tier) => {
+    const { x, y, z } = tier, key = tier.topic ? tier.topic.id : 'found';
+    tier.key = key;
+    add('tier-' + key, { kind: 'tier', role: tier.role, topic: tier.topic, tier, g: { x0: x, x1: x + 2, y0: y, y1: y + 2, z0: z - 1, z1: z } });
+    add('keel-' + key, { kind: 'keel', role: tier.role, topic: tier.topic, tier, g: { x0: x + 0.5, x1: x + 1.5, y0: y + 0.5, y1: y + 1.5, z0: z - 1 - COL_H, z1: z - 1 } });
+    L.tiers.push(tier);
+    if (tier.topic) L.byTopic.set(tier.topic.id, tier);
+  };
+  const addFlight = (tier, steps, ids) => {
+    tier.stepIds = [];
+    steps.forEach((g, k) => {
+      const lesson = tier.topic ? tier.topic.lessons[k] : null;
+      const id = lesson ? 'step-' + lesson.id : ids + k;
+      add(id, { kind: 'step', role: tier.role, topic: tier.topic, lesson, tier, k, g });
+      tier.stepIds.push(id);
+    });
+  };
+  add('ground', { kind: 'ground', role: 'foundation', g: { x0: -2.5, x1: 2.5, y0: -2.5, y1: 2.5, z0: -2.25, z1: -1.5 } });
+  const found = { x: -1, y: -1, z: 0, topic: null, role: 'foundation', idx: 0, stepIds: [] };
+  addTier(found);
+  let prev = found;
+  pl.done.forEach((t, i) => {
+    const f = flight(prev, dirOf(i), 0, t.lessons.length);
+    const tier = { ...f.plat, topic: t, role: 'path', idx: i + 1, dir: dirOf(i), from: prev, gap: 0 };
+    addFlight(tier, f.steps); addTier(tier); prev = tier;
+  });
+  const cur = prev, D = pl.done.length;
+  cur.isHub = true;
+  L.hubTier = cur;
+  // Your tier's sides: one is where you came up; the turntable faces the two that climb away from you.
+  const s0 = dirOf(D), s1 = D > 0 ? dirOf(D - 1) : '-y';
+  L.slotDirs = [s0, s1];
+  L.inSide = D > 0 ? OPP[dirOf(D - 1)] : '+y';
+  for (const { topic, slot } of pl.options) {
+    const dir = L.slotDirs[slot];
+    const f = flight(cur, dir, 1, topic.lessons.length);
+    const tier = { ...f.plat, topic, role: 'option', slot, dir, from: cur, gap: 1, idx: D + 1 };
+    addFlight(tier, f.steps); addTier(tier);
+    L.options.push(tier);
+  }
+  L.options.sort((a, b) => a.slot - b.slot);
+  // Not yet built: the rest of the climb rises from the main option, then the summit.
+  let gp = L.options.find((o) => o.slot === 0) || cur;
+  let gi = gp === cur ? D : D + 1, idx = D + 2;
+  for (const t of pl.queue) {
+    const dir = dirOf(gi++);
+    const f = flight(gp, dir, 0, t.lessons.length);
+    const tier = { ...f.plat, topic: t, role: 'ghost', idx: idx++, dir, from: gp, gap: 0 };
+    addFlight(tier, f.steps); addTier(tier); gp = tier;
+  }
+  {
+    const dir = dirOf(gi);
+    const f = flight(gp, dir, 0, 2);
+    const tier = { ...f.plat, topic: null, role: 'summit', idx, dir, from: gp, gap: 0, key: 'summit' };
+    addFlight(tier, f.steps, 'sstep-');
+    const { x, y, z } = tier;
+    add('tier-summit', { kind: 'tier', role: 'summit', tier, g: { x0: x, x1: x + 2, y0: y, y1: y + 2, z0: z - 1, z1: z } });
+    add('keel-summit', { kind: 'keel', role: 'summit', tier, g: { x0: x + 0.5, x1: x + 1.5, y0: y + 0.5, y1: y + 1.5, z0: z - 1 - COL_H, z1: z - 1 } });
+    // A gateway at the top: two posts and a lintel, opening toward the viewer.
+    add('arch-a', { kind: 'post', role: 'summit', tier, g: { x0: x + 0.25, x1: x + 0.65, y0: y + 0.25, y1: y + 0.65, z0: z, z1: z + 1.5 } });
+    add('arch-b', { kind: 'post', role: 'summit', tier, g: { x0: x + 1.35, x1: x + 1.75, y0: y + 0.25, y1: y + 0.65, z0: z, z1: z + 1.5 } });
+    add('arch-c', { kind: 'lintel', role: 'summit', tier, g: { x0: x + 0.25, x1: x + 1.75, y0: y + 0.25, y1: y + 0.65, z0: z + 1.5, z1: z + 1.85 } });
+    L.summit = tier; L.tiers.push(tier);
+  }
+  return L;
+}
+
+// ═══════════════════════ Chrome + card ═══════════════════════
+let plan = computePlan(null);
+const { score, caption } = mountChrome({
+  id: 'impossible-tower',
+  eyebrow: 'Your SAT knowledge graph',
+  title: 'Impossible Tower',
+  tagline: `Every lesson is a step and every topic a tier. You’ve mastered ${stats.mastered} steps so far. Choose where the tower rises next.`,
+  gateBackground: 'linear-gradient(180deg, rgba(196,232,250,0.78) 0%, rgba(226,244,252,0.84) 55%, rgba(255,244,230,0.9) 100%)',
+  beginLabel: 'Build my tower',
+  onBegin: () => startIntro(),
+});
+// Audio comes from the shared 'impossible-tower' synth theme (shared/audio-themes.js): Lydian pads +
+// kalimba, no drums, loudness-matched with the other variants.
+let cardOpen = false, closedAt = 0, heldCaption = null;
+const card = createLessonCard(graph, {
+  score,
+  caption: () => {}, // the tower says it; celebrate() adds one specific line instead
+  onComplete: (evt) => celebrate(evt),
+  onOpen: (n) => { cardOpen = true; hideTip(); keepClearOfCard(n); },
+  onClose: () => {
+    cardOpen = false; closedAt = clock(); score.sfx('back');
+    if (cardShift) { cam.ty -= cardShift; cardShift = 0; }
+    if (heldCaption && clock() - heldCaption.at < 15000) setTimeout(() => caption(heldCaption.line, 3000), 250);
+    heldCaption = null;
+  },
+});
+
+// ═══════════════════════ Canvas, scale, projection ═══════════════════════
+const cv = document.getElementById('scene');
+const ctx = cv.getContext('2d');
+let VW = 0, VH = 0, DPR = 1, TW = 64, HW = 32, HH = 16, ZP = 32, ANCHOR_Y = 0;
+const SAFE = { top: 80, bottom: 96, side: 24 };
+const PX = (x, y) => (x - y) * HW;
+const PY = (x, y, z) => (x + y) * HH - z * ZP;
+function resize() {
+  VW = innerWidth; VH = innerHeight; DPR = Math.min(2, devicePixelRatio || 1);
+  cv.width = Math.round(VW * DPR); cv.height = Math.round(VH * DPR);
+  SAFE.bottom = VW < 640 ? 128 : 96; SAFE.top = VW < 640 ? 72 : 80; SAFE.side = VW < 640 ? 16 : 24;
+  // Grid scale: the branch fan (~6.6 tiles wide) and ~8 tiles of height must fit the safe area.
+  const maxTW = 64 + clamp((VH - 720) / 30, 0, 12);
+  const tw = Math.min((VW - SAFE.side * 2) / (VW < 640 ? 7.4 : 6.8), (VH - SAFE.top - SAFE.bottom) / 7.6, maxTW);
+  TW = clamp(Math.floor(tw / 4) * 4, 36, 80); HW = TW / 2; HH = TW / 4; ZP = TW / 2;
+  ANCHOR_Y = Math.round((SAFE.top + VH - SAFE.bottom) / 2);
+  for (const b of boxes.values()) b.pd = true;
+  geomDirty = true; hudRect = null;
+  buildClouds();
+}
+
+// ═══════════════════════ Live boxes ═══════════════════════
+const boxes = new Map();
+let layout = null, geomDirty = true;
+function mkBox(s) {
+  return { id: s.id, d: { ...s.g }, dd: { ...s.g }, tw: null, enter: null, ap: 1, dying: 0, pd: true,
+    a: { solid: 1, front: 0, lit: 0, hover: 0, flash: 0, settle: 0 }, capRot: 0, w: null, bb: [0, 0, 0, 0], dk: 0 };
+}
+const sameG = (a, b) => Math.abs(a.x0 - b.x0) + Math.abs(a.y0 - b.y0) + Math.abs(a.z0 - b.z0) + Math.abs(a.x1 - b.x1) + Math.abs(a.y1 - b.y1) + Math.abs(a.z1 - b.z1) < 1e-6;
+function applyLayout(L, { animate = false, dur = 900, stagger = 30 } = {}) {
+  layout = L;
+  const now = clock();
+  for (const [id, s] of L.specs) {
+    let b = boxes.get(id);
+    if (!b) {
+      b = mkBox(s); boxes.set(id, b);
+      if (animate) b.enter = { t0: now + 250 + (s.tier?.idx ?? 0) * 12, dur: 600, dz: 0.8 };
+    } else if (animate && !sameG(b.d, s.g)) {
+      const order = s.tier ? Math.max(0, s.tier.idx - L.D + 1) : 0;
+      b.tw = { from: { ...b.d }, to: { ...s.g }, t0: now + order * stagger, dur };
+    } else if (!animate) { b.d = { ...s.g }; b.tw = null; }
+    b.dying = 0;
+    b.spec = s; b.kind = s.kind; b.role = s.role; b.topic = s.topic || null; b.lesson = s.lesson || null; b.tier = s.tier || null;
+    b.isHub = !!(s.kind === 'tier' && s.tier && s.tier.isHub);
+    drawGeom(b); b.pd = true;
+  }
+  for (const [id, b] of boxes) if (!L.specs.has(id) && !b.dying) b.dying = now;
+  hubBox = boxes.get('tier-' + L.hubTier.key);
+  geomDirty = true;
+}
+
+// ═══════════════════════ The turntable (your tier's cap) ═══════════════════════
+let hubBox = null;
+const hub = { th: 0, vel: 0, target: 0, want: null, bridge: 0, bridgeT: 0, lockedFor: null, lockAt: 0 };
+const angleOfOption = (o) => ANG[o.dir];
+function chooseAngle(cur, want, avoid) {
+  let best = null;
+  for (let k = -2; k <= 2; k++) {
+    const cand = want + k * TAU, lo = Math.min(cur, cand), hi = Math.max(cur, cand);
+    let crosses = false;
+    for (let m = -3; m <= 3; m++) { const a = avoid + m * TAU; if (a > lo + 0.05 && a < hi - 0.05) crosses = true; }
+    if (crosses) continue;
+    if (best === null || Math.abs(cand - cur) < Math.abs(best - cur)) best = cand;
+  }
+  return best ?? want;
+}
+function connect(opt, { instant = false } = {}) {
+  if (!opt) return;
+  const changed = hub.want !== opt;
+  hub.want = opt;
+  hub.target = chooseAngle(hub.th, angleOfOption(opt), ANG[layout.inSide]);
+  if (instant || reduceMotion) { hub.th = hub.target; hub.vel = 0; }
+  if (changed) { hub.lockedFor = null; geomDirty = true; }
+}
+const connected = () => (hub.lockedFor && hub.lockedFor === hub.want ? hub.want : null);
+function rotateTo(opt) {
+  connect(opt);
+  return new Promise((res) => { const t0 = clock(); const chk = () => (connected() === opt || clock() - t0 > 1200 ? res() : requestAnimationFrame(chk)); chk(); });
+}
+function updateHub(dt, now) {
+  const w = 13, z = 0.72;
+  const steps = Math.max(1, Math.ceil(dt * 240)), h = dt / steps;
+  const before = hub.th;
+  for (let i = 0; i < steps; i++) { hub.vel += (w * w * (hub.target - hub.th) - 2 * z * w * hub.vel) * h; hub.th += hub.vel * h; }
+  if (Math.abs(hub.th - before) > 1e-5 && hubBox) { hubBox.pd = true; geomDirty = true; }
+  if (!hub.lockedFor && hub.want && Math.abs(hub.target - hub.th) < 0.07) {
+    hub.lockedFor = hub.want; hub.lockAt = now;
+    if (phase === 'live' || intro.connecting) score.sfx('step'); // the turntable clunks into place
+  }
+  const bk = 1 - Math.exp(-dt * (hub.bridgeT > hub.bridge ? 9 : 16));
+  const nb = hub.bridge + (hub.bridgeT - hub.bridge) * bk;
+  if (Math.abs(nb - hub.bridge) > 1e-4) { hub.bridge = Math.abs(hub.bridgeT - nb) < 0.003 ? hub.bridgeT : nb; if (hubBox) hubBox.pd = true; geomDirty = true; }
+}
+
+// ═══════════════════════ The figure ═══════════════════════
+const fig = { mode: 'hub', on: null, x: 0, y: 0, z: 0, ap: 0, walk: null, bob: 0, drop: 0 };
+function figPos() {
+  if (fig.walk || fig.mode === 'walk') return [fig.x, fig.y, fig.z];
+  const b = fig.mode === 'hub' ? hubBox : fig.on;
+  if (!b) return [fig.x, fig.y, fig.z];
+  const g = b.dd;
+  return [(g.x0 + g.x1) / 2, (g.y0 + g.y1) / 2, g.z1];
+}
+const topCenter = (b) => [(b.dd.x0 + b.dd.x1) / 2, (b.dd.y0 + b.dd.y1) / 2, b.dd.z1];
+function walk(pts, { speed = 2.6, follow = true } = {}) {
+  return new Promise((res) => {
+    if (reduceMotion || pts.length < 2) { const p = pts[pts.length - 1]; if (p) { fig.x = p[0]; fig.y = p[1]; fig.z = p[2]; } fig.walk = null; res(); return; }
+    fig.walk = { pts, i: 0, u: 0, speed, res, follow };
+    [fig.x, fig.y, fig.z] = pts[0];
+  });
+}
+function updateWalk(dt) {
+  const w = fig.walk;
+  if (!w) return;
+  let left = dt;
+  while (left > 0 && fig.walk) {
+    const a = w.pts[w.i], b = w.pts[w.i + 1];
+    const len = Math.max(0.2, Math.hypot(b[0] - a[0], b[1] - a[1]));
+    const du = (w.speed * left) / len;
+    if (w.u + du >= 1) {
+      left -= ((1 - w.u) * len) / w.speed; w.i++; w.u = 0;
+      score.sfx('step'); // footstep as it lands
+      if (w.i >= w.pts.length - 1) { [fig.x, fig.y, fig.z] = w.pts[w.pts.length - 1]; fig.walk = null; w.res(); return; }
+    } else { w.u += du; left = 0; }
+  }
+  const a = w.pts[w.i], b = w.pts[w.i + 1], u = w.u;
+  fig.x = lerp(a[0], b[0], u); fig.y = lerp(a[1], b[1], u);
+  const dz = b[2] - a[2];
+  fig.z = lerp(a[2], b[2], smooth(0.15, 0.85, u)) + Math.sin(Math.PI * u) * (Math.abs(dz) > 0.01 ? 0.22 : 0.05);
+  geomDirty = true;
+}
+
+// ═══════════════════════ Per-box animated state ═══════════════════════
+function targetsFor(b) {
+  const r = b.role, st = b.lesson ? stateOf(b.lesson) : null;
+  let solid = 1, front = 0, lit = 0;
+  if (r === 'option') {
+    if (b.kind === 'step') { solid = st === 'locked' ? 0.16 : 1; front = st === 'frontier' ? 1 : 0; }
+    else solid = 0.5;
+    const c = connected();
+    if (c && b.tier === c && b.kind === 'step' && st === 'mastered') lit = 1;
+  } else if (r === 'ghost') {
+    if (b.kind === 'step') solid = st === 'mastered' ? 0.34 : st === 'frontier' ? 0.2 : 0.05;
+    else solid = 0.04;
+  } else if (r === 'summit') solid = b.kind === 'lintel' ? 0.62 : b.kind === 'post' ? 0.42 : 0.32;
+  return { solid, front, lit };
+}
+
+// ═══════════════════════ Geometry: projection, silhouettes, sorting ═══════════════════════
+function drawGeom(b) {
+  // Displayed geometry = tweened position + entrance offset.
+  const g = b.d, dd = b.dd;
+  let dz = 0;
+  if (b.enter) dz = (1 - easeOutBack(clamp(b.ap, 0, 1))) * b.enter.dz;
+  if (b.a.settle > 0) dz += b.a.settle * 0.14;
+  dd.x0 = g.x0; dd.x1 = g.x1; dd.y0 = g.y0; dd.y1 = g.y1; dd.z0 = g.z0 + dz; dd.z1 = g.z1 + dz;
+}
+function projectBox(b) {
+  const g = b.dd, h = (g.z1 - g.z0) * ZP;
+  const ax = PX(g.x0, g.y0), ay = PY(g.x0, g.y0, g.z1);
+  const bx = PX(g.x1, g.y0), by = PY(g.x1, g.y0, g.z1);
+  const cx = PX(g.x1, g.y1), cy = PY(g.x1, g.y1, g.z1);
+  const dx = PX(g.x0, g.y1), dy = PY(g.x0, g.y1, g.z1);
+  b.top = [ax, ay, bx, by, cx, cy, dx, dy];
+  b.right = [bx, by, cx, cy, cx, cy + h, bx, by + h];
+  b.left = [dx, dy, cx, cy, cx, cy + h, dx, dy + h];
+  b.sil = [ax, ay, bx, by, bx, by + h, cx, cy + h, dx, dy + h, dx, dy];
+  b.hb = (b.kind === 'tier' ? 0.5 : 0) * ZP; // upper band (the cap) on tier blocks
+  b.w = { x0: g.x0, x1: g.x1, y0: g.y0, y1: g.y1, z0: g.z0, z1: g.z1 };
+  b.bb = [dx, ay, bx, cy + h];
+  // The turntable (and intro caps) rotate: widen the sort box and screen box to cover the swept cap + bridge.
+  if (b.kind === 'tier' && (b.isHub || Math.abs(b.capRot) > 1e-4)) {
+    const rp = rotatedParts(b);
+    for (const part of rp) for (const c of part.c) {
+      b.w.x0 = Math.min(b.w.x0, c[0]); b.w.x1 = Math.max(b.w.x1, c[0]); b.w.y0 = Math.min(b.w.y0, c[1]); b.w.y1 = Math.max(b.w.y1, c[1]);
+      const sx = PX(c[0], c[1]), sy = PY(c[0], c[1], part.z1);
+      b.bb[0] = Math.min(b.bb[0], sx); b.bb[2] = Math.max(b.bb[2], sx); b.bb[1] = Math.min(b.bb[1], sy); b.bb[3] = Math.max(b.bb[3], sy + (part.z1 - part.z0) * ZP);
+    }
+    b.rp = rp;
+  } else b.rp = null;
+  b.dk = (b.w.x0 + b.w.x1 + b.w.y0 + b.w.y1 + b.w.z0 + b.w.z1) / 2;
+  b.pd = false;
+}
+// Rotated cap (+ bridge on the hub): corners in world xy, with z extents.
+function rotatedParts(b) {
+  const g = b.dd, cx = (g.x0 + g.x1) / 2, cy = (g.y0 + g.y1) / 2;
+  const th = b.isHub ? hub.th : b.capRot;
+  const co = Math.cos(th), si = Math.sin(th);
+  const R = (lx, ly) => [cx + lx * co - ly * si, cy + lx * si + ly * co];
+  const parts = [{ name: 'cap', c: [R(-1, -1), R(1, -1), R(1, 1), R(-1, 1)], z0: g.z1 - 0.5, z1: g.z1 }];
+  if (b.isHub && hub.bridge > 0.01 && layout.options.length) {
+    const e = 1 + hub.bridge;
+    parts.push({ name: 'bridge', c: [R(1, -0.5), R(e, -0.5), R(e, 0.5), R(1, 0.5)], z0: g.z1 - 0.5, z1: g.z1, mid: R((1 + e) / 2, 0) });
+  }
+  return parts;
+}
+function behind(a, b) {
+  const E = 1e-4;
+  if (a.x1 <= b.x0 + E) return -1; if (b.x1 <= a.x0 + E) return 1;
+  if (a.y1 <= b.y0 + E) return -1; if (b.y1 <= a.y0 + E) return 1;
+  if (a.z1 <= b.z0 + E) return -1; if (b.z1 <= a.z0 + E) return 1;
+  return 0;
+}
+// Painter's order: topological sort on separating axes for every pair whose screen boxes overlap.
+function topoSort(items) {
+  const n = items.length, adj = Array.from({ length: n }, () => []), indeg = new Int32Array(n);
+  for (let i = 0; i < n; i++) {
+    const a = items[i], ab = a.bb;
+    for (let j = i + 1; j < n; j++) {
+      const b = items[j], bb = b.bb;
+      if (ab[2] <= bb[0] || bb[2] <= ab[0] || ab[3] <= bb[1] || bb[3] <= ab[1]) continue;
+      let r = behind(a.w, b.w);
+      if (r === 0) r = a.dk <= b.dk ? -1 : 1;
+      if (r < 0) { adj[i].push(j); indeg[j]++; } else { adj[j].push(i); indeg[i]++; }
+    }
+  }
+  const out = [], ready = [], done = new Uint8Array(n);
+  for (let i = 0; i < n; i++) if (!indeg[i]) ready.push(i);
+  while (out.length < n) {
+    if (!ready.length) { let best = -1; for (let i = 0; i < n; i++) if (!done[i] && (best < 0 || items[i].dk < items[best].dk)) best = i; ready.push(best); }
+    let bi = 0;
+    for (let k = 1; k < ready.length; k++) if (items[ready[k]].dk < items[ready[bi]].dk) bi = k;
+    const i = ready[bi]; ready.splice(bi, 1);
+    if (done[i]) continue;
+    done[i] = 1; out.push(items[i]);
+    for (const j of adj[i]) if (!done[j] && --indeg[j] === 0) ready.push(j);
+  }
+  return out;
+}
+const figItem = { id: 'figure', fig: true, w: null, bb: [0, 0, 0, 0], dk: 0 };
+let order = [];
+function rebuildOrder() {
+  const items = [];
+  for (const b of boxes.values()) { if (b.pd) projectBox(b); if (b.alpha > 0.003) items.push(b); }
+  if (fig.ap > 0.01) {
+    const [x, y, z] = figPos();
+    figItem.w = { x0: x - 0.16, x1: x + 0.16, y0: y - 0.16, y1: y + 0.16, z0: z + 0.001, z1: z + 0.85 };
+    const sx = PX(x, y), sy = PY(x, y, z);
+    figItem.bb = [sx - TW * 0.2, sy - TW * 0.62, sx + TW * 0.2, sy + TW * 0.1];
+    figItem.dk = x + y + z + 0.4;
+    items.push(figItem);
+  }
+  order = topoSort(items);
+  geomDirty = false;
+}
+
+// ═══════════════════════ Camera ═══════════════════════
+const cam = { x: 0, y: 0, vx: 0, vy: 0, tx: 0, ty: 0 };
+let camW = 11;
+const toScreen = (wx, wy) => [wx - cam.x + VW / 2, wy - cam.y + ANCHOR_Y];
+const fromScreen = (sx, sy) => [sx + cam.x - VW / 2, sy + cam.y - ANCHOR_Y];
+function tierTopC(t) { return [PX(t.x + 1, t.y + 1), PY(t.x + 1, t.y + 1, t.z)]; }
+// Home framing: your tier, its branches and the two tiers you came up through.
+function homeFrame() {
+  const L = layout, pts = [];
+  const push = (t) => { if (!t) return; pts.push([PX(t.x, t.y + 2), PY(t.x, t.y + 2, t.z - 1.5)], [PX(t.x + 2, t.y), PY(t.x + 2, t.y, t.z)], [PX(t.x, t.y), PY(t.x, t.y, t.z)], [PX(t.x + 2, t.y + 2), PY(t.x + 2, t.y + 2, t.z - 1.5)]); };
+  push(L.hubTier); L.options.forEach(push);
+  let t = L.hubTier;
+  for (let i = 0; i < 2 && t && t.from; i++) { t = t.from; push(t); }
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  for (const [x, y] of pts) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+  return { x: (x0 + x1) / 2, y: (y0 + y1) / 2, w: x1 - x0, h: y1 - y0 };
+}
+function camLimits() {
+  const top = layout.summit, f = layout.tiers[0];
+  const [, ty] = tierTopC(top), [, by] = tierTopC(f);
+  return { min: ty - 40, max: by - 40 };
+}
+let home = { x: 0, y: 0 };
+function goHome() {
+  const h = homeFrame(), b = bands();
+  // Put the top of the branches just below the top travel band; the climb below runs down into the haze.
+  const want = b.top + 28 + h.h / 2, y = h.y + (ANCHOR_Y - Math.min(want, ANCHOR_Y + 40));
+  home = { x: h.x, y };
+  cam.tx = h.x; cam.ty = y + cardShift;
+}
+let cardShift = 0;
+function springCam(dt) {
+  const steps = Math.max(1, Math.ceil(dt * 240)), h = dt / steps, w = camW;
+  for (let i = 0; i < steps; i++) {
+    cam.vx += (w * w * (cam.tx - cam.x) - 2 * w * cam.vx) * h; cam.x += cam.vx * h;
+    cam.vy += (w * w * (cam.ty - cam.y) - 2 * w * cam.vy) * h; cam.y += cam.vy * h;
+  }
+}
+
+// ═══════════════════════ Pointer + navigation ═══════════════════════
+const pointer = { x: -1, y: -1, in: false, active: false, lastMove: 0, type: 'mouse', down: false, dragging: false, sx: 0, sy: 0, lastY: 0, engaged: false };
+let hovered = null, lastHoverKey = '', forcedHover = null;
+cv.addEventListener('pointermove', (e) => {
+  pointer.type = e.pointerType;
+  if (pointer.down && e.pointerType === 'touch') {
+    if (Math.hypot(e.clientX - pointer.sx, e.clientY - pointer.sy) > 8) pointer.dragging = true;
+    if (pointer.dragging && phase === 'live' && !cardOpen) { const lim = camLimits(); cam.ty = clamp(cam.ty - (e.clientY - pointer.lastY), lim.min, lim.max); }
+    pointer.lastY = e.clientY;
+  }
+  pointer.x = e.clientX; pointer.y = e.clientY; pointer.in = true; pointer.lastMove = clock();
+  pointer.active = e.pointerType !== 'touch';
+  inputKind = e.pointerType === 'touch' ? 'touch' : 'mouse';
+  if (pointer.active) pointer.engaged = true;
+  if (hintState === 'showing' && clock() - hintAt > 600) hideHint();
+});
+cv.addEventListener('pointerleave', () => { pointer.in = false; if (!pointer.down) pointer.engaged = false; });
+document.addEventListener('mouseout', (e) => { if (!e.relatedTarget) { pointer.active = false; pointer.in = false; pointer.engaged = false; } });
+cv.addEventListener('pointerdown', (e) => {
+  pointer.down = true; pointer.dragging = false; pointer.sx = e.clientX; pointer.sy = e.clientY; pointer.lastY = e.clientY;
+  pointer.x = e.clientX; pointer.y = e.clientY; pointer.type = e.pointerType;
+  if (e.pointerType === 'touch') cv.setPointerCapture?.(e.pointerId);
+});
+cv.addEventListener('pointerup', (e) => {
+  const wasDrag = pointer.dragging;
+  pointer.down = false; pointer.dragging = false;
+  if (e.pointerType === 'touch') { pointer.active = false; pointer.in = false; }
+  if (wasDrag || phase !== 'live' || busy) return;
+  const touch = e.pointerType === 'touch';
+  const hit = hitTest(e.clientX, e.clientY, touch ? 34 : 28);
+  if (hit) { activate(hit, touch); return; }
+  if (cardOpen) { card.close(); return; }
+  // A tap near your tier, toward a path, connects that path.
+  const o = optionToward(e.clientX, e.clientY, true);
+  if (o) { connect(o); if (touch) inviteUntil = clock() + 6000; }
+});
+cv.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  if (phase !== 'live' || cardOpen) return;
+  const d = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY, lim = camLimits();
+  cam.ty = clamp(cam.ty + d * 0.9, lim.min, lim.max);
+}, { passive: false });
+let inputKind = 'mouse', inviteUntil = 0;
+function activate(hit, touch) {
+  if (hit.kind === 'step') {
+    if (hit.box.tier?.role === 'option') connect(hit.box.tier);
+    if (hit.box.lesson) card.open(hit.box.lesson);          // the card plays 'select'
+  } else if (hit.kind === 'tier') {
+    const t = hit.tier;
+    if (t.role === 'option') connect(t);
+    if (t.role === 'summit') { const [, y] = tierTopC(t); cam.ty = y + 80; score.sfx('select'); return; }
+    const l = t.topic && (t.topic.lessons.find((x) => stateOf(x) === 'frontier') || t.topic.lessons[t.topic.lessons.length - 1]);
+    if (l) card.open(l);
+  }
+  if (touch) inviteUntil = clock() + 6000;
+}
+addEventListener('keydown', (e) => {
+  if (phase !== 'live' || e.metaKey || e.ctrlKey || e.altKey) return;
+  const k = e.key;
+  if (k === 'Escape') {
+    if (cardOpen || clock() - closedAt < 80) return; // the card handles its own Esc first
+    hideTip();
+    if (Math.abs(cam.ty - home.y) > 24) { goHome(); score.sfx('back'); }
+    return;
+  }
+  if (busy) return;
+  lastKeyAt = clock();
+  const opts = layout.options;
+  if ((k === 'ArrowLeft' || k === 'ArrowRight') && opts.length) {
+    const i = Math.max(0, opts.indexOf(hub.want));
+    connect(opts[(i + (k === 'ArrowRight' ? 1 : opts.length - 1)) % opts.length]); inputKind = 'key'; inviteUntil = clock() + 6000;
+  } else if (k === 'ArrowUp' || k === 'ArrowDown') {
+    const lim = camLimits(); cam.ty = clamp(cam.ty + (k === 'ArrowUp' ? -1 : 1) * TW * 2.5, lim.min, lim.max);
+  } else if ((k === 'Enter' || k === ' ') && document.activeElement === document.body && !cardOpen && hub.want) {
+    const l = hub.want.topic.lessons.find((x) => stateOf(x) === 'frontier'); if (l) card.open(l);
+  } else return;
+  e.preventDefault();
+});
+
+// ── hit-testing on this frame's silhouettes, front-most first
+function pip(poly, x, y) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 2; i < poly.length; j = i, i += 2) {
+    const xi = poly[i], yi = poly[i + 1], xj = poly[j], yj = poly[j + 1];
+    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+function edgeDist(poly, x, y) {
+  let best = Infinity;
+  for (let k = 0, j = poly.length - 2; k < poly.length; j = k, k += 2) {
+    const ax = poly[j], ay = poly[j + 1], vx = poly[k] - ax, vy = poly[k + 1] - ay, l2 = vx * vx + vy * vy || 1;
+    const u = clamp(((x - ax) * vx + (y - ay) * vy) / l2, 0, 1);
+    best = Math.min(best, Math.hypot(x - (ax + vx * u), y - (ay + vy * u)));
+  }
+  return pip(poly, x, y) ? 0 : best;
+}
+const interactive = (b) => b.alpha > 0.3 && (b.kind === 'step' ? !!b.lesson : b.kind === 'tier' && b.role !== 'foundation') || (b.kind === 'lintel' || b.kind === 'post') && b.alpha > 0.3;
+function targetOf(b) {
+  if (b.kind === 'step') return { kind: 'step', box: b, key: b.id };
+  if (b.kind === 'post' || b.kind === 'lintel') return { kind: 'tier', tier: layout.summit, box: boxes.get('tier-summit'), key: 'tier-summit' };
+  return { kind: 'tier', tier: b.tier, box: b, key: b.id };
+}
+function silOf(b) {
+  if (!b.rp) return b.sil;
+  // Rotated cap: hull of its projected corners and the static base below.
+  const pts = [];
+  for (const p of b.rp) for (const c of p.c) { pts.push([PX(c[0], c[1]), PY(c[0], c[1], p.z1)], [PX(c[0], c[1]), PY(c[0], c[1], p.z0)]); }
+  for (let i = 0; i < b.sil.length; i += 2) pts.push([b.sil[i], b.sil[i + 1]]);
+  return hull(pts);
+}
+function hull(pts) {
+  pts.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const cr = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const lo = [], up = [];
+  for (const p of pts) { while (lo.length >= 2 && cr(lo[lo.length - 2], lo[lo.length - 1], p) <= 0) lo.pop(); lo.push(p); }
+  for (let i = pts.length - 1; i >= 0; i--) { const p = pts[i]; while (up.length >= 2 && cr(up[up.length - 2], up[up.length - 1], p) <= 0) up.pop(); up.push(p); }
+  up.pop(); lo.pop();
+  return [...lo, ...up].flat();
+}
+function hitTest(sx, sy, slop = 0) {
+  const [x, y] = fromScreen(sx, sy);
+  for (let i = order.length - 1; i >= 0; i--) {
+    const b = order[i];
+    if (b.fig || !interactive(b)) continue;
+    if (x < b.bb[0] || x > b.bb[2] || y < b.bb[1] || y > b.bb[3]) continue;
+    if (pip(silOf(b), x, y)) return targetOf(b);
+  }
+  if (!slop) return null;
+  let best = null, bd = slop;
+  for (const b of order) {
+    if (b.fig || !interactive(b)) continue;
+    if (x < b.bb[0] - slop || x > b.bb[2] + slop || y < b.bb[1] - slop || y > b.bb[3] + slop) continue;
+    // Steps you can act on win ties against platforms.
+    const d = edgeDist(silOf(b), x, y) - (b.kind === 'step' && b.a.front > 0.5 ? 8 : 0);
+    if (d < bd) { bd = d; best = b; }
+  }
+  return best ? targetOf(best) : null;
+}
+function hubScreen() {
+  if (!hubBox) return [0, 0];
+  const [x, y, z] = topCenter(hubBox);
+  return toScreen(PX(x, y), PY(x, y, z));
+}
+function optionAnchor(o) {
+  const fid = o.stepIds.find((id) => { const b = boxes.get(id); return b && stateOf(b.lesson) === 'frontier'; }) || o.stepIds[0];
+  const b = boxes.get(fid);
+  const [x, y, z] = topCenter(b);
+  return toScreen(PX(x, y), PY(x, y, z));
+}
+// Which path the pointer is heading toward, by angle from your tier (with hysteresis so it never chatters).
+function optionToward(sx, sy, tap = false) {
+  const opts = layout.options;
+  if (!opts.length || !hubBox) return null;
+  const [hx, hy] = hubScreen();
+  if (hx < -40 || hx > VW + 40 || hy < -40 || hy > VH + 40) return null;
+  const dx = sx - hx, dy = sy - hy, dist = Math.hypot(dx, dy);
+  if (dist < TW * 0.7 || (tap && dist > TW * 6)) return null;
+  const pa = Math.atan2(dy, dx);
+  let best = null, bd = Infinity, curD = Infinity;
+  for (const o of opts) {
+    const [ax, ay] = optionAnchor(o);
+    let d = Math.abs(Math.atan2(ay - hy, ax - hx) - pa); if (d > Math.PI) d = TAU - d;
+    if (o === hub.want) curD = d;
+    if (d < bd) { bd = d; best = o; }
+  }
+  if (best !== hub.want && bd > curD - 0.17) return hub.want;
+  return best;
+}
+// Camera intent: over a target the view holds still; in the top or bottom band it drifts along the tower.
+function updateNav(dt, now) {
+  const usable = pointer.active && pointer.in && !pointer.down;
+  if (!usable || cardOpen || busy) return;
+  const aiming = pointer.lastMove > lastKeyAt;
+  if (hovered?.box?.tier?.role === 'option' && hovered.box.tier !== hub.want) connect(hovered.box.tier);
+  else if (!hovered && aiming && !inBand(pointer.y)) { const o = optionToward(pointer.x, pointer.y); if (o && o !== hub.want) connect(o); }
+  if (hovered) { drift.t = 0; return; }
+  // Thin travel bands at the top and bottom edge; a short dwell first, so crossing them never moves anything.
+  const { top: topZ, bot: botZ } = bands(), y = pointer.y;
+  let v = 0;
+  if (y < topZ) v = -(0.35 + 0.65 * clamp((topZ - y) / topZ, 0, 1));
+  else if (y > botZ) v = 0.35 + 0.65 * clamp((y - botZ) / (VH - botZ), 0, 1);
+  drift.t = v ? drift.t + dt : 0;
+  if (v) { const lim = camLimits(); cam.ty = clamp(cam.ty + v * smooth(0.18, 0.6, drift.t) * VH * 1.1 * dt, lim.min, lim.max); }
+}
+const drift = { t: 0 };
+const bands = () => ({ top: Math.max(72, Math.round(VH * 0.13)), bot: VH - SAFE.bottom + 8 - Math.max(48, Math.round(VH * 0.07)) });
+const inBand = (y) => { const b = bands(); return y < b.top || y > b.bot; };
+let lastKeyAt = 0;
+
+// ═══════════════════════ Intro choreography ═══════════════════════
+let phase = 'pre', busy = false;
+const intro = { T0: 0, events: [], connecting: false, focusY: null, silentUntil: 0 };
+const qT = parseFloat(params.get('t'));
+const demo = params.get('demo');
+const skipTo = Number.isFinite(qT) ? qT : (demo ? 99 : (reduceMotion ? 99 : 0));
+function setEnter(id, start, dur, dz, rot = false) {
+  const b = boxes.get(id); if (!b) return;
+  b.enter = { t0: intro.T0 + start * 1000, dur: dur * 1000, dz, rot };
+  b.ap = 0;
+}
+function startIntro() {
+  phase = 'intro';
+  intro.T0 = clock() - skipTo * 1000;
+  intro.silentUntil = skipTo;
+  document.getElementById('hud').classList.add('show');
+  const L = layout, D = L.D;
+  const dt = D > 0 ? Math.min(0.55, 2.6 / D) : 0.5;
+  const ev = (at, fn) => intro.events.push({ at, fn, done: false });
+  setEnter('ground', 0.05, 0.6, 0.6); setEnter('tier-found', 0.1, 0.6, 0.9, true); setEnter('keel-found', 0.1, 0.6, 0.9);
+  let tLand = 0.55;
+  for (const t of L.tiers) {
+    if (t.role !== 'path') continue;
+    const ts = 0.45 + (t.idx - 1) * dt;
+    t.stepIds.forEach((id, k) => setEnter(id, ts + k * 0.07, 0.42, -0.6));
+    const tp = ts + t.stepIds.length * 0.07 + 0.05;
+    setEnter('tier-' + t.key, tp, 0.55, 1.2, true); setEnter('keel-' + t.key, tp, 0.55, 1.2);
+    const steps = Math.round((stats.mastered * t.idx) / Math.max(1, D));
+    ev(tp + 0.4, (silent) => { if (!silent) score.sfx('step'); setHud(t.idx, steps); intro.focusY = tierTopC(t)[1]; });
+    ev(ts, () => { intro.focusY = tierTopC(t)[1]; });
+    tLand = tp + 0.4;
+  }
+  const tOpt = tLand + 0.2;
+  L.options.forEach((o, j) => {
+    const ts = tOpt + j * 0.18;
+    o.stepIds.forEach((id, k) => setEnter(id, ts + k * 0.06, 0.4, -0.6));
+    setEnter('tier-' + o.key, ts + o.stepIds.length * 0.06, 0.5, 0.9); setEnter('keel-' + o.key, ts + o.stepIds.length * 0.06, 0.5, 0.9);
+  });
+  const tConnect = tOpt + Math.max(0, L.options.length - 1) * 0.18 + 0.55;
+  const tArr = tConnect + 0.5;
+  hub.bridge = 0; hub.bridgeT = 0;
+  ev(tConnect, (silent) => {
+    intro.connecting = !silent;
+    hub.bridgeT = 1;
+    const o = L.options[0];
+    if (o) {
+      const goal = angleOfOption(o), avoid = ANG[L.inSide];
+      let start = goal - Math.PI / 2;
+      if (Math.abs(Math.atan2(Math.sin(start - avoid), Math.cos(start - avoid))) < 0.1) start = goal + Math.PI / 2;
+      hub.th = silent ? goal : start; hub.vel = 0; hub.want = null;
+      connect(o, { instant: silent });
+      if (silent) hub.bridge = 1;
+    }
+  });
+  if (tArr - 2.2 > 0.2) ev(tArr - 2.2, (silent) => { if (!silent) score.sfx('riser'); });
+  ev(tArr, (silent) => {
+    intro.connecting = false;
+    fig.mode = 'hub'; fig.drop = silent ? 0 : 1;
+    setHud(D, stats.mastered);
+    if (!silent) { score.sfx('intro'); score.setIntensity(0.34, 5); }
+    const line = `${stats.mastered} steps mastered. Choose your next path.`;
+    if (!silent || !Number.isFinite(qT)) caption(line, 3400);
+  });
+  // The unbuilt tower above fades in once you've arrived, bottom to top.
+  const ghosts = L.tiers.filter((t) => t.role === 'ghost' || t.role === 'summit');
+  ghosts.forEach((t, j) => {
+    const ts = tArr + 0.3 + j * 0.05;
+    t.stepIds.forEach((id, k) => setEnter(id, ts + k * 0.02, 0.5, 0.5));
+    setEnter('tier-' + t.key, ts + 0.04, 0.55, 0.6); setEnter('keel-' + t.key, ts + 0.04, 0.55, 0.6);
+    if (t.role === 'summit') ['arch-a', 'arch-b', 'arch-c'].forEach((id) => setEnter(id, ts + 0.1, 0.6, 0.6));
+  });
+  ev(tArr + 0.35, (silent) => {
+    phase = 'live';
+    goHome();
+    if (silent) { cam.x = cam.tx; cam.y = cam.ty; cam.vx = cam.vy = 0; }
+    score.setIntensity(intensityFor(), silent ? 0.5 : 4);
+    setTimeout(showHint, silent ? (Number.isFinite(qT) ? 300 : 3700) : 3700);
+    runDemo();
+  });
+  intro.tArr = tArr;
+  score.setIntensity(0.12, 0.3);
+  if (skipTo < tArr) setTimeout(() => score.setIntensity(0.6, Math.max(0.5, tArr - skipTo)), 300);
+  if (skipTo >= tArr) { fig.ap = 1; for (const b of boxes.values()) if (b.enter) b.ap = 1; }
+}
+function updateIntro(now) {
+  const T = (now - intro.T0) / 1000;
+  for (const e of intro.events) if (!e.done && T >= e.at) { e.done = true; e.fn(e.at < intro.silentUntil - 0.05); }
+  if (phase === 'intro') {
+    if (T < intro.tArr && intro.focusY !== null) { cam.tx = home.x; cam.ty = Math.max(home.y, intro.focusY + TW * 0.6); }
+    else { cam.tx = home.x; cam.ty = home.y; }
+  }
+}
+
+// ═══════════════════════ HUD, hint, tooltip ═══════════════════════
+const hudL1 = document.getElementById('hudL1'), hudL2 = document.getElementById('hudL2');
+let hudKey = '';
+function setHud(tier, steps) {
+  const key = tier + '|' + steps + '|' + stats.score;
+  if (key === hudKey) return; hudKey = key;
+  hudL1.textContent = `${tier > 0 ? 'Tier ' + tier : 'Ground floor'} · ${steps} of ${stats.total} steps`;
+  hudL2.textContent = `Projected ${stats.score}`;
+}
+setHud(0, 0);
+const hintEl = document.getElementById('hint');
+let hintState = 'unseen', hintAt = 0;
+function showHint() {
+  if (hintState !== 'unseen' || cardOpen) return;
+  hintState = 'showing'; hintAt = clock();
+  hintEl.textContent = VW < 640 ? 'Tap a path to connect it, then its glowing step.' : 'Point toward a path to connect it. Click its glowing step.';
+  hintEl.classList.add('show');
+  setTimeout(hideHint, 6000);
+}
+function hideHint() { if (hintState !== 'showing') return; hintState = 'done'; hintEl.classList.remove('show'); }
+
+const homePill = document.getElementById('homePill');
+homePill.addEventListener('click', () => { goHome(); score.sfx('back'); homePill.blur(); });
+const tip = document.getElementById('tip');
+let tipKey = '';
+function hideTip() { tip.classList.remove('show'); tipKey = ''; }
+function tipHTML(target, invite) {
+  const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
+  const touch = inputKind === 'touch';
+  if (target.kind === 'tier' && target.tier.role === 'summit') {
+    const above = layout.tiers.filter((t) => t.role === 'ghost' || t.role === 'option').length;
+    return `<div class="d"><i style="background:var(--sun-shadow)"></i>Your goal</div><div class="t">Summit · 1500</div><div class="m">${above} tiers above you</div>`;
+  }
+  const t = target.kind === 'step' ? target.box.topic : target.tier.topic;
+  const hue = DOMAIN_HUES[t.domain];
+  if (target.kind === 'step') {
+    const l = target.box.lesson, s = stateOf(l);
+    let meta;
+    if (s === 'mastered') meta = 'Built. Mastered.';
+    else if (s === 'frontier') {
+      const act = touch ? 'Tap' : inputKind === 'key' ? 'Press Enter' : 'Click';
+      meta = invite ? `${act === 'Press Enter' ? 'Press Enter' : act + ' the glowing step'} to start.` : (l.progress > 0 ? `${Math.round(l.progress * 100)}% done. ${act} to continue.` : `Ready. ${act} to start.`);
+    }
+    else meta = graph.blockerText(l);
+    return `<div class="d"><i style="background:${hue}"></i>${esc(t.label)}</div><div class="t">${esc(l.label)}</div><div class="m">${esc(meta)}</div>`;
+  }
+  const tier = target.tier, m = masteredIn(t), n = t.lessons.length;
+  const where = tier.role === 'current' || tier.isHub ? 'You are here.' : tier.role === 'path' ? `Tier ${tier.idx}. Built.` : `${m} of ${n} steps built.`;
+  return `<div class="d"><i style="background:${hue}"></i>${esc(t.domain)}</div><div class="t">${esc(t.label)}</div><div class="m">${esc(where)}</div>`;
+}
+let hudRect = null;
+function keepOut() {
+  if (!hudRect) { const r = document.getElementById('hud').getBoundingClientRect(); hudRect = { x: 0, y: 0, w: r.right + 16, h: r.bottom + 12 }; }
+  const zones = [hudRect, { x: VW - 72, y: VH - (VW < 640 ? 120 : 72), w: 72, h: 120 }];
+  if (cardOpen) { const r = card.el.getBoundingClientRect(); zones.push({ x: r.left - 8, y: r.top - 8, w: r.width + 16, h: r.height + 16 }); }
+  return zones;
+}
+function placeBox(w, h, ax, top, bottom) {
+  const minX = SAFE.side - 8, maxX = VW - SAFE.side + 8 - w;
+  const x = clamp(ax - w / 2, minX, Math.max(minX, maxX));
+  const zones = keepOut(), maxY = VH - (VW < 640 ? 132 : 76);
+  const fits = (y) => y >= 12 && y + h <= maxY && !zones.some((z) => x < z.x + z.w && x + w > z.x && y < z.y + z.h && y + h > z.y);
+  const up = top - 12 - h, down = bottom + 12;
+  if (fits(up)) return { x, y: up };
+  if (fits(down)) return { x, y: down };
+  return { x, y: clamp(up, 12, maxY - h) };
+}
+function anchorOf(target) {
+  const b = target.box;
+  if (target.kind === 'tier' && target.tier.role === 'summit') {
+    const s = boxes.get('arch-c');
+    const [sx, sy] = toScreen((s.bb[0] + s.bb[2]) / 2, s.bb[1]);
+    const [, by] = toScreen(0, b.bb[3]);
+    return { x: sx, top: sy - 24, bottom: by };
+  }
+  const [x0, y0] = toScreen(b.bb[0], b.bb[1]), [x1, y1] = toScreen(b.bb[2], b.bb[3]);
+  let top = y0;
+  if (fig.ap > 0.5 && b === hubBox) top -= TW * 0.5;
+  return { x: (x0 + x1) / 2, top, bottom: y1 };
+}
+function showTip(target, invite) {
+  const key = target.key + (invite ? ':i' : '') + ':' + (target.box?.lesson ? stateOf(target.box.lesson) : '');
+  if (key !== tipKey) { tipKey = key; tip.innerHTML = tipHTML(target, invite); }
+  const a = anchorOf(target);
+  const { x, y } = placeBox(tip.offsetWidth, tip.offsetHeight, a.x, a.top, a.bottom);
+  tip.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`;
+  tip.classList.add('show');
+}
+function keepClearOfCard(lesson) {
+  // On narrow screens the card covers the lower half: lift the tower so the lesson stays in view.
+  const b = boxes.get('step-' + lesson.id);
+  if (!b || VW >= 640) return;
+  const r = card.el.getBoundingClientRect();
+  const [, sy] = toScreen(0, b.bb[3]);
+  if (sy > r.top - 24) { cardShift = sy - (r.top - 24) + 24; cam.ty += cardShift; }
+}
+
+// ═══════════════════════ Lesson completion ═══════════════════════
+function releaseHolds() { const had = holds.size > 0; holds.clear(); return had; }
+async function celebrate(evt) {
+  busy = true; hideTip();
+  const l = evt.lesson, t = topicOf.get(l.id);
+  stats = evt.stats;
+  for (const u of evt.unlocked) holds.set(u.id, 'locked'); // they light up once the figure gets there
+  const sb = boxes.get('step-' + l.id);
+  if (sb) { sb.a.flash = 1; sb.a.settle = 1; } // the step turns to stone with the card's 'complete' cue
+  const topicDone = t.lessons.every((x) => x.state === 'mastered');
+  setHud(layout.D, stats.mastered);
+  const opt = layout.options.find((o) => o.topic === t);
+  try {
+    if (opt) {
+      await rotateTo(opt);
+      await wait(120);
+      const pts = [topCenter(hubBox)];
+      const dv = DV[opt.dir], [hx, hy, hz] = topCenter(hubBox);
+      pts.push([hx + dv[0] * 1.5, hy + dv[1] * 1.5, hz]);
+      const k = opt.stepIds.indexOf('step-' + l.id);
+      for (let i = 0; i <= k; i++) pts.push(topCenter(boxes.get(opt.stepIds[i])));
+      if (topicDone) pts.push(topCenter(boxes.get('tier-' + opt.key)));
+      fig.mode = 'walk';
+      await walk(pts);
+      if (topicDone) { fig.mode = 'on'; fig.on = boxes.get('tier-' + opt.key); await shiftTo(t); }
+      else {
+        fig.mode = 'on'; fig.on = boxes.get('step-' + l.id);
+        if (releaseHolds()) score.sfx('unlock'); // the next step lights
+        await wait(650);
+        fig.mode = 'walk';
+        await walk(pts.slice(0, k + 3).reverse(), { speed: 3.2 });
+        fig.mode = 'hub';
+      }
+    } else if (topicDone) {
+      await shiftTo(t, { walkAfter: true });
+    } else if (releaseHolds()) score.sfx('unlock');
+  } finally { busy = false; }
+}
+async function shiftTo(t, { walkAfter = false } = {}) {
+  const prevOpts = new Set(layout.options.map((o) => o.topic));
+  const oldHub = hubBox;
+  hub.bridgeT = 0;
+  await wait(reduceMotion ? 0 : 320);
+  releaseHolds();
+  plan = computePlan(plan);
+  const L = buildLayout(plan);
+  if (oldHub) { oldHub.isHub = false; }
+  const keepTh = Math.round(hub.th / (Math.PI / 2)) * (Math.PI / 2);
+  applyLayout(L, { animate: !reduceMotion, dur: 1000, stagger: 26 });
+  // The old turntable becomes ordinary stone; square caps look the same every 90°.
+  hub.th = keepTh; hub.vel = 0; hub.want = null; hub.lockedFor = null; hub.bridge = 0; hub.bridgeT = 0;
+  goHome();
+  setHud(L.D, stats.mastered);
+  if (!reduceMotion) score.sfx('step'); // the architecture starts to shift
+  await wait(reduceMotion ? 0 : 1250);
+  if (walkAfter && oldHub) {
+    const nt = L.hubTier, pts = [topCenter(oldHub)];
+    for (const id of nt.stepIds) pts.push(topCenter(boxes.get(id)));
+    pts.push(topCenter(hubBox));
+    fig.mode = 'walk'; await walk(pts);
+  }
+  fig.mode = 'hub';
+  const o = L.options[0];
+  if (o) {
+    hub.th = chooseAngle(hub.th, angleOfOption(o), ANG[L.inSide]) - (reduceMotion ? 0 : Math.PI / 2);
+    hub.target = hub.th; hub.bridgeT = 1;
+    hub.th = Math.round(hub.th / (Math.PI / 2)) * (Math.PI / 2);
+    await wait(60);
+    await rotateTo(o);
+  }
+  if (L.options.some((x) => !prevOpts.has(x.topic))) score.sfx('unlock'); // a new path slides into reach
+  const line = `Tier ${L.D} built: ${t.label}.`;
+  if (VW < 640 && cardOpen) heldCaption = { line, at: clock() }; else caption(line, 3200);
+  score.setIntensity(intensityFor(), 3);
+}
+
+// ═══════════════════════ Music follows the view ═══════════════════════
+function intensityFor() {
+  const lim = camLimits();
+  const f = clamp((lim.max - cam.y) / Math.max(1, lim.max - lim.min), 0, 1);
+  return clamp(0.26 + 0.3 * f, 0, 0.56);
+}
+let lastIntensity = -1, intensityAt = 0;
+
+// ═══════════════════════ Drawing ═══════════════════════
+const clouds = [];
+function cloudSprite(seed, w) {
+  let s = seed;
+  const r = () => { s = (s * 16807) % 2147483647; return s / 2147483647; };
+  const h = Math.round(w * 0.34), pad = 4;
+  const c = document.createElement('canvas'); c.width = Math.round((w + pad * 2) * DPR); c.height = Math.round((h + pad * 2) * DPR);
+  const g = c.getContext('2d'); g.scale(DPR, DPR);
+  g.fillStyle = 'rgba(255,255,252,1)'; g.beginPath();
+  const base = pad + h;
+  g.roundRect(pad, base - h * 0.42, w, h * 0.42, h * 0.21);
+  const n = 3;
+  for (let i = 0; i < n; i++) {
+    const cx = pad + w * (0.25 + 0.25 * i) + (r() - 0.5) * w * 0.06, rad = h * (0.36 + 0.22 * Math.sin(Math.PI * (0.2 + 0.6 * (i / (n - 1))))) * (0.85 + r() * 0.2);
+    g.moveTo(cx + rad, base - h * 0.42); g.arc(cx, base - h * 0.42, rad, 0, TAU);
+  }
+  g.fill();
+  return { c, w: w + pad * 2, h: h + pad * 2 };
+}
+function buildClouds() {
+  clouds.length = 0;
+  const big = VW < 640 ? 150 : 230;
+  const spec = [[0.12, 0.36, 1.0, 11], [0.84, 0.14, 0.8, 23], [0.7, 0.6, 0.65, 37], [0.1, 0.8, 0.75, 51], [0.92, 0.95, 0.9, 67]];
+  for (const [fx, fy, sc, seed] of spec) clouds.push({ fx, fy, p: 0.12 + sc * 0.12, sp: cloudSprite(seed, big * sc), a: 0.5 + sc * 0.25 });
+}
+function drawSky(now) {
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  SKY = skyStops();
+  const g = ctx.createLinearGradient(0, 0, 0, VH);
+  g.addColorStop(0, rgb(SKY[0])); g.addColorStop(0.55, rgb(SKY[1])); g.addColorStop(1, rgb(SKY[2]));
+  ctx.fillStyle = g; ctx.fillRect(0, 0, VW, VH);
+  const t = now / 1000;
+  for (const c of clouds) {
+    const span = VH * 2.2;
+    let y = (c.fy * span - cam.y * c.p) % span; if (y < 0) y += span; y -= VH * 0.5;
+    let x = c.fx * VW + (reduceMotion ? 0 : Math.sin(t * 0.02 + c.fx * 9) * 24) - c.sp.w / 2;
+    if (y < -c.sp.h || y > VH) continue;
+    ctx.globalAlpha = c.a; ctx.drawImage(c.sp.c, Math.round(x), Math.round(y), c.sp.w, c.sp.h);
+  }
+  ctx.globalAlpha = 1;
+}
+function poly(p, n = p.length) { ctx.beginPath(); ctx.moveTo(p[0], p[1]); for (let i = 2; i < n; i += 2) ctx.lineTo(p[i], p[i + 1]); ctx.closePath(); ctx.fill(); }
+const tmp = [];
+function shadeSet(b, base) {
+  // Apply state: frontier sun, lit path, hover, completion flash, then fade toward the sky (unbuilt).
+  const a = b.a;
+  let top = base.top, left = base.left, right = base.right;
+  if (a.front > 0.002) { top = mixc(top, SUN.top, a.front); left = mixc(left, SUN.left, a.front); right = mixc(right, SUN.right, a.front); }
+  if (a.lit > 0.002) { top = mixc(top, LIT_TOP, 0.75 * a.lit); left = mixc(left, mixc(left, SUN.left, 0.25), a.lit); }
+  if (a.hover > 0.002) { const k = 0.32 * a.hover; top = mixc(top, FOAM, k * 1.2); left = mixc(left, FOAM, k); right = mixc(right, FOAM, k * 0.8); }
+  if (a.flash > 0.002) { const k = Math.min(1, a.flash) * 0.8; top = mixc(top, FOAM, k); left = mixc(left, FOAM, k); right = mixc(right, FOAM, k); }
+  const fade = (1 - a.solid) * 0.8;
+  if (fade > 0.002) {
+    const sky = mixc(skyAtY(b.screenY), FOAM, 0.38); // a whitened haze keeps pale hues true instead of greening them
+    top = mixc(top, sky, fade * 0.92); left = mixc(left, sky, fade); right = mixc(right, sky, fade * 0.96);
+  }
+  return { top: rgb(top), left: rgb(left), right: rgb(right), arr: [top, left, right] };
+}
+function basePal(b) {
+  if (b.kind === 'step') return b.topic ? stepPal(b.topic.hue) : STONE;
+  if (b.kind === 'keel') return KEEL;
+  if (b.kind === 'ground') return GROUND;
+  if (b.kind === 'lintel') return GOLD;
+  return STONE;
+}
+function drawGlow(b, now) {
+  const [x, y, z] = topCenter(b);
+  const sx = PX(x, y), sy = PY(x, y, z) + HH * 0.2;
+  const on = connected() === b.tier ? 1 : 0.55;
+  const pulse = reduceMotion ? 0.9 : 0.8 + 0.2 * Math.sin(now / 1000 * 2.6);
+  const k = b.a.front * on * pulse * b.alpha;
+  const r = TW * 1.05;
+  ctx.save(); ctx.scale(1, 0.62);
+  const g2 = ctx.createRadialGradient(sx, sy / 0.62, 0, sx, sy / 0.62, r);
+  g2.addColorStop(0, `rgba(255,251,222,${0.85 * k})`); g2.addColorStop(0.4, `rgba(255,246,196,${0.4 * k})`); g2.addColorStop(1, 'rgba(255,246,196,0)');
+  ctx.fillStyle = g2; ctx.beginPath(); ctx.arc(sx, sy / 0.62, r, 0, TAU); ctx.fill(); ctx.restore();
+}
+function drawBox(b, now) {
+  ctx.globalAlpha = b.alpha;
+  if (b.kind === 'step' && b.a.front > 0.05 && b.role === 'option' && b.a.solid > 0.6) { drawGlow(b, now); ctx.globalAlpha = b.alpha; }
+  if (b.kind === 'tier') return drawTier(b);
+  const c = shadeSet(b, basePal(b));
+  if (b.kind === 'keel') {
+    // Column: solid under the tier, dissolving into the sky further down.
+    for (const [face, col] of [[b.left, c.arr[1]], [b.right, c.arr[2]]]) {
+      const y0 = Math.min(face[1], face[3]), y1 = Math.max(face[5], face[7]);
+      const g = ctx.createLinearGradient(0, y0, 0, y1);
+      g.addColorStop(0, rgb(col)); g.addColorStop(0.35, rgba(col, 0.9)); g.addColorStop(1, rgba(col, 0));
+      ctx.fillStyle = g; poly(face);
+    }
+    return;
+  }
+  ctx.fillStyle = c.left; poly(b.sil);
+  ctx.fillStyle = c.right; poly(b.right);
+  ctx.fillStyle = c.top; poly(b.top);
+}
+function tierPalOf(b) {
+  if (b.role === 'summit') return { left: mixc(STONE.left, GOLD.left, 0.5), right: mixc(STONE.right, GOLD.right, 0.5) };
+  return b.topic ? tierPal(b.topic.hue) : FOUND_BAND;
+}
+function drawTier(b) {
+  const cap = shadeSet(b, STONE), bp = tierPalOf(b), band = shadeSet(b, { top: KEEL.top, left: bp.left, right: bp.right });
+  const hb = b.hb, L = b.left, R = b.right;
+  if (b.rp) {
+    // Static base band below, the rotating cap (and bridge) on top.
+    const T = b.top;
+    ctx.fillStyle = band.left; poly([L[0], L[1] + hb, L[2], L[3] + hb, L[4], L[5], L[6], L[7]]);
+    ctx.fillStyle = band.right; poly([R[0], R[1] + hb, R[2], R[3] + hb, R[4], R[5], R[6], R[7]]);
+    ctx.fillStyle = band.top; poly([T[0], T[1] + hb, T[2], T[3] + hb, T[4], T[5] + hb, T[6], T[7] + hb]);
+    const parts = b.rp.slice();
+    const cx = (b.dd.x0 + b.dd.x1) / 2, cy = (b.dd.y0 + b.dd.y1) / 2;
+    if (parts.length > 1 && parts[1].mid[0] + parts[1].mid[1] < cx + cy) parts.reverse();
+    for (const p of parts) drawPrism(p, b, p.name === 'bridge');
+    return;
+  }
+  ctx.fillStyle = band.left; poly(b.sil);
+  ctx.fillStyle = band.right; poly(R);
+  ctx.fillStyle = cap.left; poly([L[0], L[1], L[2], L[3], L[2], L[3] + hb, L[0], L[1] + hb]);
+  ctx.fillStyle = cap.right; poly([R[0], R[1], R[2], R[3], R[2], R[3] + hb, R[0], R[1] + hb]);
+  ctx.fillStyle = cap.top; poly(b.top);
+}
+// A rotated box: draw the side faces that face the camera (+x,+y half-space), shaded by their normal, then the top.
+function drawPrism(p, b, isBridge) {
+  const c = p.c, h = (p.z1 - p.z0) * ZP;
+  const lit = isBridge && connected() ? 1 : 0;
+  const base = lit ? { top: mixc(STONE.top, LIT_TOP, 0.75), left: STONE.left, right: STONE.right } : STONE;
+  const s = shadeSet({ a: b.a, screenY: b.screenY }, base);
+  const sc = c.map(([x, y]) => [PX(x, y), PY(x, y, p.z1)]);
+  for (let i = 0; i < 4; i++) {
+    const a0 = c[i], a1 = c[(i + 1) % 4];
+    // Outward normal of edge a0→a1 (corners run counter-clockwise in world xy).
+    const ex = a1[0] - a0[0], ey = a1[1] - a0[1], len = Math.hypot(ex, ey) || 1;
+    const nx = ey / len, ny = -ex / len;
+    if (nx + ny <= 0.001) continue;
+    const wgt = clamp((nx - ny + 1) / 2, 0, 1);
+    ctx.fillStyle = rgb(mixc(s.arr[1], s.arr[2], wgt));
+    const s0 = sc[i], s1 = sc[(i + 1) % 4];
+    poly([s0[0], s0[1], s1[0], s1[1], s1[0], s1[1] + h, s0[0], s0[1] + h]);
+  }
+  ctx.fillStyle = s.top;
+  poly([sc[0][0], sc[0][1], sc[1][0], sc[1][1], sc[2][0], sc[2][1], sc[3][0], sc[3][1]]);
+}
+function drawFigure(now) {
+  const [x, y, z] = figPos();
+  const sx = PX(x, y), sy = PY(x, y, z);
+  const a = fig.ap;
+  const drop = fig.drop > 0 ? easeOutBack(1 - fig.drop) : 1;
+  const lift = (1 - drop) * TW * 0.9;
+  const breathe = reduceMotion || fig.walk ? 0 : Math.sin(now / 1000 * 1.6) * 0.012;
+  // A soft geometric pawn: a tapered body and a round head, lit from the left like the stone.
+  const wb = TW * 0.3, wt = TW * 0.17, hb = TW * (0.3 + breathe), r = TW * 0.105;
+  ctx.globalAlpha = a * 0.16 * drop;
+  ctx.fillStyle = rgb(INK);
+  ctx.beginPath(); ctx.ellipse(sx, sy, TW * 0.19, TW * 0.095, 0, 0, TAU); ctx.fill();
+  ctx.globalAlpha = a;
+  const base = sy - lift - TW * 0.02, top = base - hb;
+  const body = () => {
+    ctx.beginPath();
+    ctx.moveTo(sx - wb / 2 + 3, base); ctx.lineTo(sx + wb / 2 - 3, base);
+    ctx.quadraticCurveTo(sx + wb / 2, base, sx + wb / 2 - 1, base - 3);
+    ctx.lineTo(sx + wt / 2, top + 2); ctx.quadraticCurveTo(sx + wt / 2, top, sx + wt / 2 - 2, top);
+    ctx.lineTo(sx - wt / 2 + 2, top); ctx.quadraticCurveTo(sx - wt / 2, top, sx - wt / 2, top + 2);
+    ctx.lineTo(sx - wb / 2 + 1, base - 3); ctx.quadraticCurveTo(sx - wb / 2, base, sx - wb / 2 + 3, base);
+    ctx.closePath();
+  };
+  const hy = top - r * 0.82;
+  ctx.fillStyle = 'rgb(255,226,64)'; body(); ctx.fill();
+  ctx.save(); body(); ctx.clip(); ctx.fillStyle = 'rgb(234,186,20)'; ctx.fillRect(sx + wb * 0.08, top - 2, wb, hb + 4); ctx.restore();
+  ctx.fillStyle = 'rgb(255,226,64)'; ctx.beginPath(); ctx.arc(sx, hy, r, 0, TAU); ctx.fill();
+  ctx.save(); ctx.beginPath(); ctx.arc(sx, hy, r, 0, TAU); ctx.clip();
+  ctx.fillStyle = 'rgb(234,186,20)'; ctx.beginPath(); ctx.arc(sx - r * 0.55, hy - r * 0.35, r * 1.25, 0, TAU); ctx.rect(sx - r * 2, hy - r * 2, r * 4, r * 4); ctx.fill('evenodd');
+  ctx.fillStyle = 'rgba(255,255,252,0.9)'; ctx.beginPath(); ctx.arc(sx - r * 0.35, hy - r * 0.35, Math.max(1.2, r * 0.22), 0, TAU); ctx.fill();
+  ctx.restore();
+  ctx.globalAlpha = 1;
+}
+function drawSummitLabel() {
+  const s = boxes.get('arch-c');
+  if (!s || s.alpha < 0.05) return;
+  const cx = (s.bb[0] + s.bb[2]) / 2, top = s.bb[1];
+  ctx.globalAlpha = s.alpha * 0.85;
+  ctx.font = `16px "VAG Rundschrift D", Manrope, system-ui, sans-serif`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+  ctx.fillStyle = rgb(INK);
+  ctx.fillText('1500', Math.round(cx), Math.round(top - 8));
+  ctx.globalAlpha = 1;
+}
+
+// ═══════════════════════ Frame ═══════════════════════
+let last = performance.now();
+const perf = { n: 0, ms: 0, max: 0, recent: [] };
+const simPointer = params.has('px') ? [parseFloat(params.get('px')), parseFloat(params.get('py') ?? '0.5')] : null;
+function update(dt, now) {
+  if (simPointer && phase === 'live') Object.assign(pointer, { x: simPointer[0] * VW, y: simPointer[1] * VH, in: true, active: true, engaged: true, lastMove: now, type: 'mouse' });
+  if (phase === 'intro' || intro.events.some((e) => !e.done)) updateIntro(now);
+  // Hover (from last frame's silhouettes, so feedback lands in this frame).
+  let h = null;
+  if (forcedHover) h = forcedHover;
+  else if (phase === 'live' && pointer.in && pointer.active && !cardOpen && !busy && !inBand(pointer.y)) h = hitTest(pointer.x, pointer.y, 28);
+  const hk = h ? h.key : '';
+  if (hk !== lastHoverKey) {
+    if (h && now - pointer.lastMove < 200) score.sfx('hover'); // only when the pointer arrives, not when things glide under it
+    lastHoverKey = hk;
+  }
+  hovered = h;
+  if (phase === 'live') updateNav(dt, now);
+  updateHub(dt, now);
+  updateWalk(dt);
+  // Figure appearance.
+  if (phase === 'live' || (phase === 'intro' && intro.events.find((e) => e.at === intro.tArr)?.done)) fig.ap = Math.min(1, fig.ap + dt * 3);
+  if (fig.drop > 0) fig.drop = Math.max(0, fig.drop - dt * 2.6);
+  // Boxes: entrances, tweens, state easing.
+  const k8 = 1 - Math.exp(-dt * 8), k14 = 1 - Math.exp(-dt * 16), conn = connected();
+  const hovBox = hovered?.box;
+  for (const [id, b] of boxes) {
+    let moved = false;
+    if (b.enter) {
+      const u = b.enter.t0 === Infinity ? 0 : clamp((now - b.enter.t0) / b.enter.dur, 0, 1);
+      if (u !== b.ap) { b.ap = u; moved = true; }
+      b.capRot = b.enter.rot && b.kind === 'tier' && !b.isHub ? (1 - easeOut(u)) * (-Math.PI / 2) : 0;
+      if (u >= 1) { b.enter = null; b.capRot = 0; moved = true; }
+    }
+    if (b.tw) {
+      const u = clamp((now - b.tw.t0) / b.tw.dur, 0, 1), e = easeInOut(u), f = b.tw.from, t = b.tw.to;
+      if (u > 0) {
+        b.d.x0 = lerp(f.x0, t.x0, e); b.d.x1 = lerp(f.x1, t.x1, e); b.d.y0 = lerp(f.y0, t.y0, e);
+        b.d.y1 = lerp(f.y1, t.y1, e); b.d.z0 = lerp(f.z0, t.z0, e); b.d.z1 = lerp(f.z1, t.z1, e); moved = true;
+      }
+      if (u >= 1) b.tw = null;
+    }
+    const tg = targetsFor(b);
+    const a = b.a;
+    a.solid += (tg.solid - a.solid) * k8; a.front += (tg.front - a.front) * k8; a.lit += (tg.lit - a.lit) * k8;
+    const hv = hovBox && (hovBox === b || (hovered.kind === 'tier' && (b.tier === hovered.tier && b.kind !== 'step'))) ? 1 : 0;
+    a.hover += (hv - a.hover) * k14;
+    if (a.flash > 0) a.flash = Math.max(0, a.flash - dt * 1.4);
+    if (a.settle > 0) { a.settle = Math.max(0, a.settle - dt * 2.2); moved = true; }
+    let alpha = b.enter ? smooth(0, 0.55, b.ap) : 1;
+    if (b.dying) { alpha *= 1 - clamp((now - b.dying) / 350, 0, 1); if (alpha <= 0) { boxes.delete(id); geomDirty = true; continue; } }
+    if (Math.abs(alpha - (b.alpha ?? -1)) > 1e-4) { if ((alpha > 0.003) !== ((b.alpha ?? 0) > 0.003)) geomDirty = true; b.alpha = alpha; }
+    if (moved) { drawGeom(b); b.pd = true; geomDirty = true; }
+  }
+  // Music follows where you're looking.
+  if (phase === 'live' && now - intensityAt > 500) { const it = intensityFor(); if (Math.abs(it - lastIntensity) > 0.02) { lastIntensity = it; score.setIntensity(it, 2); } intensityAt = now; }
+  // Camera.
+  if (fig.walk && fig.walk.follow) { const [x, y, z] = figPos(); cam.ty = lerp(cam.ty, PY(x, y, z) + TW * 0.8, 0.08); }
+  camW = phase === 'intro' ? 5.5 : reduceMotion ? 30 : 11;
+  springCam(dt);
+  const lim = camLimits();
+  skyAlt = clamp((lim.max - cam.y) / Math.max(1, lim.max - lim.min), 0, 1);
+}
+function frame(real) {
+  const f0 = performance.now();
+  const dt = Math.min(0.05, Math.max(0.001, (real - last) / 1000)); last = real;
+  const now = clock();
+  update(dt, now);
+  if (geomDirty) rebuildOrder();
+  drawSky(now);
+  const ox = Math.round((VW / 2 - cam.x) * DPR) / DPR, oy = Math.round((ANCHOR_Y - cam.y) * DPR) / DPR;
+  ctx.setTransform(DPR, 0, 0, DPR, ox * DPR, oy * DPR);
+  const vx0 = cam.x - VW / 2 - 40, vx1 = cam.x + VW / 2 + 40, vy0 = cam.y - ANCHOR_Y - 40, vy1 = cam.y + (VH - ANCHOR_Y) + 40;
+  for (const it of order) {
+    if (it.bb[2] < vx0 || it.bb[0] > vx1 || it.bb[3] < vy0 || it.bb[1] > vy1) continue;
+    if (it.fig) { drawFigure(now); continue; }
+    it.screenY = it.bb[1] + oy + (it.bb[3] - it.bb[1]) * 0.4;
+    drawBox(it, now);
+  }
+  ctx.globalAlpha = 1;
+  drawSummitLabel();
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  const hz = SAFE.bottom + 80, hg = ctx.createLinearGradient(0, VH - hz, 0, VH);
+  hg.addColorStop(0, rgba(SKY[2], 0)); hg.addColorStop(0.45, rgba(SKY[2], 0.86)); hg.addColorStop(1, rgba(SKY[2], 0.98));
+  ctx.fillStyle = hg; ctx.fillRect(0, VH - hz, VW, hz);
+
+  // DOM overlays: one label at a time.
+  const invite = !hovered && phase === 'live' && !cardOpen && !busy && hub.want && ((pointer.engaged && pointer.active) || clock() < inviteUntil);
+  if (hovered && !cardOpen && !busy) showTip(hovered, false);
+  else if (invite) {
+    const fid = hub.want.stepIds.find((id) => { const b = boxes.get(id); return b && stateOf(b.lesson) === 'frontier'; });
+    const b = fid && boxes.get(fid);
+    const [, by] = b ? toScreen(0, (b.bb[1] + b.bb[3]) / 2) : [0, -1e9];
+    const inView = by > SAFE.top && by < VH - SAFE.bottom && !(pointer.active && inBand(pointer.y));
+    if (b && inView) showTip({ kind: 'step', box: b, key: b.id }, true); else if (tipKey) hideTip();
+  } else if (tipKey) hideTip();
+  cv.style.cursor = hovered && phase === 'live' && !busy ? 'pointer' : 'default';
+  if (phase === 'live' && hubBox) {
+    const [, hy] = hubScreen();
+    const away = !busy && (hy < -TW || hy > VH - SAFE.bottom + TW * 0.5);
+    if (away !== homePill.classList.contains('show')) homePill.classList.toggle('show', away);
+    homePill.classList.toggle('down', hy > VH);
+  }
+
+  const ms = performance.now() - f0;
+  perf.n++; perf.ms += ms; perf.max = Math.max(perf.max, ms); perf.recent.push(ms); if (perf.recent.length > 240) perf.recent.shift();
+  if (params.has('debug')) document.body.dataset.dbg = [phase, cam.y.toFixed(0), hub.th.toFixed(2), hovered?.key ?? '-', ms.toFixed(2)].join(' ');
+  requestAnimationFrame(frame);
+}
+
+// ═══════════════════════ Boot ═══════════════════════
+resize();
+addEventListener('resize', () => { resize(); goHome(); cam.x = cam.tx; });
+applyLayout(buildLayout(plan));
+for (const b of boxes.values()) { b.enter = { t0: Infinity, dur: 1, dz: 0 }; b.ap = 0; }
+for (const id of ['ground', 'tier-found', 'keel-found']) { const b = boxes.get(id); if (b) { b.enter = null; b.ap = 1; } }
+goHome();
+{ const [, fy] = tierTopC(layout.tiers[0]); cam.x = cam.tx; cam.y = fy - TW * 0.5; cam.ty = cam.y; }
+if (layout.options[0]) { hub.want = layout.options[0]; }
+document.fonts?.load?.('16px "VAG Rundschrift D"');
+requestAnimationFrame(frame);
+
+// ═══════════════════════ QA hooks ═══════════════════════
+// ?skipgate=1 [&t=seconds] [&demo=hover|shift|complete|top]
+function runDemo() {
+  if (!demo) return;
+  const o = layout.options;
+  if (demo === 'hover' && o[0]) {
+    const id = o[0].stepIds.find((i) => stateOf(boxes.get(i).lesson) === 'frontier');
+    const b = boxes.get(id); forcedHover = { kind: 'step', box: b, key: b.id };
+  } else if (demo === 'shift' && o[1]) { connect(o[1]); inviteUntil = Infinity; }
+  else if (demo === 'complete' && o[0]) {
+    setTimeout(() => {
+      const l = o[0].topic.lessons.find((x) => stateOf(x) === 'frontier');
+      card.open(l);
+      card.el.querySelector('.actions .kg-btn.primary')?.click();
+    }, 300);
+  } else if (demo === 'top') { const [, y] = tierTopC(layout.summit); cam.ty = y + 80; cam.y = cam.ty; }
+}
+window.__tower = { graph, boxes, cam, hub, fig, perf, score, hitTest, get plan() { return plan; }, get layout() { return layout; }, get phase() { return phase; }, get order() { return order; }, connect, card };
+</script>
+</body>
+</html>

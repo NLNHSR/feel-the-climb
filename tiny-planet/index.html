@@ -1,0 +1,1805 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Tiny Planet</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="../shared/dolphin.css">
+<style>
+  :root { color-scheme: light; --orange: #FF9F43; --orange-shadow: #D9792A; }
+  html, body { overflow: hidden; }
+  body {
+    color: var(--ink);
+    background: linear-gradient(180deg, #92D8FF 0%, #BCE7FF 50%, #E2F5FF 100%);
+  }
+  #gl { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; outline: none; }
+
+  /* Status (top-left): the one piece of text on screen at rest. */
+  .status {
+    position: fixed; top: 24px; left: 24px; z-index: 20; pointer-events: none; max-width: calc(100vw - 48px);
+    opacity: 0; transform: translateY(-6px); transition: opacity 600ms ease, transform 600ms cubic-bezier(.2,.9,.3,1);
+  }
+  .status.show { opacity: 1; transform: none; }
+  .st-line { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 8px; row-gap: 4px; font-weight: 700; font-size: 15px; color: var(--muted); }
+  .st-line > span { white-space: nowrap; }
+  .st-line b { color: var(--ink); font-weight: 800; display: inline-block; }
+  .st-line .big { font-family: var(--font-head); font-weight: normal; font-size: 24px; line-height: 1; }
+  .st-sep { color: var(--cloud); }
+  .pop { animation: pop 520ms cubic-bezier(.2,.9,.3,1.4); }
+  @keyframes pop { 0% { transform: scale(1); } 35% { transform: scale(1.2); } 100% { transform: scale(1); } }
+  .hint { margin-top: 8px; font-size: 13px; font-weight: 700; color: var(--muted); transition: opacity 900ms ease; }
+  .hint.gone { opacity: 0; }
+  .crumbs { margin-top: 16px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; pointer-events: auto; }
+  .crumbs[hidden] { display: none; }
+  .crumb {
+    font: 800 13px/1 var(--font-body); color: var(--ink); background: var(--foam); height: 32px; box-sizing: border-box;
+    border: 1.5px solid var(--mist); border-radius: 999px; padding: 0 12px; display: inline-flex; align-items: center; gap: 8px;
+    box-shadow: 0 3px 0 var(--chrome-shadow);
+  }
+  button.crumb { cursor: pointer; transition: transform 120ms ease, box-shadow 120ms ease; }
+  button.crumb:hover { transform: translateY(1px); box-shadow: 0 2px 0 var(--chrome-shadow); }
+  button.crumb:focus-visible { outline: 3px solid rgba(47, 154, 230, 0.45); outline-offset: 2px; }
+  .crumb i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex: none; }
+  .crumb em { font-style: normal; color: var(--muted); font-weight: 700; }
+
+  .skip {
+    position: fixed; top: 20px; right: 20px; z-index: 22; height: 36px; padding: 0 14px; border-radius: 999px; cursor: pointer;
+    font: 800 13px/1 var(--font-body); color: var(--ink); background: rgba(255, 255, 252, 0.7); border: 1.5px solid var(--mist);
+    transition: opacity 300ms ease, background 150ms ease;
+  }
+  .skip:hover { background: var(--foam); }
+  .skip.gone { opacity: 0; pointer-events: none; }
+
+  /* Overlay labels: projected from 3D, laid out in JS to stay clear of each other and the chrome. */
+  .lbl { position: fixed; left: 0; top: 0; z-index: 18; pointer-events: none; will-change: transform; opacity: 0; transition: opacity 160ms ease; white-space: nowrap; }
+  .lbl.show { opacity: 1; }
+  .cont-lbl {
+    height: 36px; box-sizing: border-box; padding: 0 14px; border-radius: 999px; display: inline-flex; align-items: center; gap: 8px;
+    background: var(--foam); border: 1.5px solid var(--mist); box-shadow: 0 3px 0 var(--chrome-shadow);
+    font: 800 15px/1 var(--font-body); color: var(--ink);
+  }
+  .cont-lbl i { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+  .cont-lbl em { font-style: normal; font-weight: 700; color: var(--muted); }
+  .topic-lbl {
+    height: 26px; box-sizing: border-box; padding: 0 10px; border-radius: 999px; display: inline-flex; align-items: center;
+    background: rgba(255, 255, 252, 0.88); font: 800 13px/1 var(--font-body); color: var(--ink);
+  }
+  .topic-lbl.locked { color: var(--muted); background: rgba(255, 255, 252, 0.7); }
+  .tip {
+    max-width: 240px; white-space: normal; background: var(--foam); color: var(--ink); border: 1.5px solid var(--mist);
+    border-radius: 14px; padding: 8px 12px; box-shadow: 0 3px 0 var(--chrome-shadow); font-size: 13px; font-weight: 700; line-height: 1.35;
+    transition: opacity 90ms ease;
+  }
+  .tip b { display: block; font-size: 15px; font-weight: 800; line-height: 1.25; }
+  .tip .st { display: flex; align-items: center; gap: 8px; margin-top: 4px; color: var(--muted); }
+  .tip .st i { width: 10px; height: 10px; border-radius: 50%; flex: none; box-shadow: 0 0 0 1.5px rgba(10, 35, 79, 0.18) inset; }
+  .tip .act { display: block; margin-top: 4px; color: var(--wave-shadow); font-weight: 800; }
+
+  /* The one recommended next lesson: a real button anchored to its landmark (or to the planet's edge). */
+  .next {
+    position: fixed; left: 0; top: 0; z-index: 21; height: 36px; box-sizing: border-box; display: inline-flex; align-items: center; gap: 4px;
+    padding: 0 8px 0 14px; border-radius: 999px; border: 2px solid var(--sun-shadow); background: var(--sun); color: var(--ink);
+    font: 800 15px/1 var(--font-body); white-space: nowrap; max-width: min(300px, calc(100vw - 32px)); cursor: pointer;
+    box-shadow: 0 3px 0 var(--sun-shadow); opacity: 0; pointer-events: none; will-change: transform;
+    transition: opacity 240ms ease, filter 140ms ease;
+  }
+  .next span { overflow: hidden; text-overflow: ellipsis; }
+  .next svg { width: 18px; height: 18px; flex: none; }
+  .next .turn { display: none; margin-right: 2px; }
+  .next.edge .turn { display: block; }
+  .next.edge .chev { display: none; }
+  .next.edge { padding: 0 14px 0 10px; }
+  .next.edge.flip .turn { transform: scaleX(-1); }
+  .next.show { opacity: 1; pointer-events: auto; }
+  .next[data-state="progress"] { background: var(--orange); border-color: var(--orange-shadow); box-shadow: 0 3px 0 var(--orange-shadow); }
+  .next.hot { filter: brightness(1.05); }
+  .next:active { box-shadow: none; }
+  .next:focus-visible { outline: 3px solid rgba(47, 154, 230, 0.5); outline-offset: 2px; }
+  #stems { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 17; pointer-events: none; overflow: visible; }
+  #stem { stroke: var(--ink); stroke-width: 2; stroke-linecap: round; opacity: 0; transition: opacity 200ms ease; }
+
+  @media (max-width: 700px) {
+    .status { top: 16px; left: 16px; max-width: calc(100vw - 32px); }
+    .st-line { font-size: 13px; }
+    .st-line .big { font-size: 22px; }
+    .skip { top: 14px; right: 14px; }
+  }
+  @media (max-width: 520px) { .st-sep { display: none; } .st-line { flex-direction: column; align-items: flex-start; } }
+  @media (prefers-reduced-motion: reduce) {
+    .status, .lbl, .next, .hint, .skip, #stem { transition: none; }
+    .pop { animation: none; }
+  }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+<canvas id="gl" tabindex="0" role="img" aria-label="Your SAT world as a little planet. Each continent is a subject; each landmark along its winding road is a lesson. Drag to spin, scroll or pinch to zoom, click a continent to fly to it."></canvas>
+
+<header class="status" id="hud" aria-live="polite">
+  <div class="st-line">
+    <span><b class="big" id="hudCount">0</b> of <span id="hudTotal">89</span> explored</span>
+    <span class="st-sep">·</span>
+    <span>Projected <b id="hudScore">400</b> → goal <span id="hudGoal">1500</span></span>
+  </div>
+  <nav class="crumbs" id="crumbs" hidden aria-label="Where you are">
+    <button class="crumb" id="backBtn" type="button">‹ Whole planet</button>
+    <span class="crumb" id="crumbCur"><i></i><span></span><em></em></span>
+  </nav>
+  <div class="hint" id="hint" hidden></div>
+</header>
+<button class="skip gone" id="skip" type="button">Skip intro</button>
+
+<svg id="stems" aria-hidden="true"><line id="stem" x1="0" y1="0" x2="0" y2="0"/></svg>
+<div class="lbl cont-lbl" id="contLbl" aria-hidden="true"><i></i><span></span><em></em></div>
+<div id="topicLayer" aria-hidden="true"></div>
+<div class="lbl tip" id="tip" role="tooltip"></div>
+<button class="next" id="next" type="button"><svg class="turn" viewBox="0 0 16 16" aria-hidden="true"><path d="M12.6 9.2A5 5 0 1 1 11 4.2" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/><path d="M11.4 1.6 11.2 4.6 8.2 4.4" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></svg><span id="nextText">Next</span><svg class="chev" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3.5 10.5 8 6 12.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+
+<script type="module">
+/*
+ * Sound design — Tiny Planet
+ * Music: playful, whimsical and adventurous. A bouncy marimba / pizzicato ostinato over a warm
+ *   ukulele-and-glockenspiel pad with light hand percussion (shaker, woodblock); it grows into a small
+ *   toy-orchestra march as you explore. Calm and curious when zoomed out on the whole planet, a little
+ *   busier when you dive into a continent or start a lesson, a short lift after each lesson you finish.
+ *   setIntensity follows how much of the world you have explored, how close the camera is, and the
+ *   moment (intro build, open lesson, celebration), easing back down when you are idle.
+ * SFX (score.sfx), each fired on the frame its visual happens:
+ *   hover    – soft wooden "tok" (pointer reaches a landmark, a continent or the Next callout)
+ *   select   – bright xylophone tap (lesson card opens)                              [lesson-card.js]
+ *   back     – the same tap, lower (card closes; Esc, sky click or "Whole planet" flies back out)
+ *   zoomIn   – airy upward whoosh with a little slide-whistle lift (camera flies into a continent)
+ *   zoomOut  – the same whoosh, falling (camera pulls back out to the whole planet)
+ *   start    – wind-up toy crank, ~0.9s (Start lesson pressed)                        [lesson-card.js]
+ *   complete – cork pop + glockenspiel sparkle (the landmark turns green)            [lesson-card.js]
+ *   unlock   – rising two-note music-box chime (new ready landmarks pop up, clouds part)
+ *   riser    – ~2.2s swirling wind + rising strings while the planet spins to a stop
+ *   intro    – soft timpani thump + a full major chord (you land on your planet)
+ *   step     – tiny marimba tick (a landmark lights during the intro, your pin hops to a new
+ *              landmark, a continent clicks past the centre while you spin the globe)
+ */
+import { createGraph, DOMAIN_HUES, pct, clamp, projectedScore } from '../shared/graph.js';
+import { mountChrome, params } from '../shared/chrome.js';
+import { createLessonCard } from '../shared/lesson-card.js';
+
+const THREE = window.THREE;
+const errors = [];
+addEventListener('error', (e) => errors.push(String(e.message)));
+addEventListener('unhandledrejection', (e) => errors.push(String(e.reason)));
+
+// ════════════════════════ Basics ════════════════════════
+const TAU = Math.PI * 2, DEG = Math.PI / 180;
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const touchFirst = matchMedia('(hover: none)').matches;
+const lerp = (a, b, t) => a + (b - a) * t;
+const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+const easeOut = (t) => 1 - Math.pow(1 - t, 3);
+const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+const easeOutBack = (t) => { const c1 = 1.5, c3 = c1 + 1; return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2); };
+const wrapPi = (a) => a - TAU * Math.floor((a + Math.PI) / TAU);
+const damp = (a, b, rate, dt) => b + (a - b) * Math.exp(-rate * dt);
+function mulberry32(a) {
+  return () => { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+}
+function hash3(i, j, k) {
+  let h = (Math.imul(i, 374761393) + Math.imul(j, 668265263) + Math.imul(k, 1440662683)) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177); h ^= h >>> 16; return (h >>> 0) / 4294967296;
+}
+function vnoise3(x, y, z) {
+  const i = Math.floor(x), j = Math.floor(y), k = Math.floor(z), fx = x - i, fy = y - j, fz = z - k;
+  const u = fx * fx * (3 - 2 * fx), v = fy * fy * (3 - 2 * fy), w = fz * fz * (3 - 2 * fz);
+  const a = lerp(lerp(hash3(i, j, k), hash3(i + 1, j, k), u), lerp(hash3(i, j + 1, k), hash3(i + 1, j + 1, k), u), v);
+  const b = lerp(lerp(hash3(i, j, k + 1), hash3(i + 1, j, k + 1), u), lerp(hash3(i, j + 1, k + 1), hash3(i + 1, j + 1, k + 1), u), v);
+  return lerp(a, b, w) * 2 - 1;
+}
+function fbm3(x, y, z, oct = 3) { let s = 0, a = 0.5, f = 1; for (let o = 0; o < oct; o++) { s += a * vnoise3(x * f + o * 17.1, y * f + o * 9.3, z * f + o * 3.7); f *= 2.03; a *= 0.5; } return s; }
+const col = (h) => new THREE.Color(h);
+
+const STATE_COL = { mastered: '#3FA669', progress: '#FF9F43', ready: '#FFF44E', locked: '#B7C0CC' };
+const STATE_C = Object.fromEntries(Object.entries(STATE_COL).map(([k, v]) => [k, col(v)]));
+const WALL_C = col('#FFFCF2'), WALL_LOCK = col('#DCE3EB'), PLAZA_C = col('#FFFCF2'), PLAZA_LOCK = col('#CDD6E0'), ROOF_LOCK = col('#AEB9C7');
+const INK = 0x173A66;
+const vkey = (l) => (l.state === 'mastered' ? 'mastered' : l.state === 'frontier' ? (l.progress > 0 ? 'progress' : 'ready') : 'locked');
+
+// ════════════════════════ World layout ════════════════════════
+const graph = createGraph();
+const R = 1, H_BASE = 0.014, STEP = 0.086, LAND_R = 0.118, ROAD_HALF = 0.0048;
+const BIOMES = {
+  meadow: { ground: '#A3D76B', alt: '#96CE60', high: '#BDE38A', beach: '#F4E3B1', walk: '#FFF3D2', relief: 'hills' },
+  forest: { ground: '#63BA77', alt: '#57B06C', high: '#7CC88B', beach: '#F1E2B2', walk: '#FFF3D2', relief: 'soft' },
+  savanna: { ground: '#EBC865', alt: '#E3BE58', high: '#F2D788', beach: '#F6E7BC', walk: '#FFF6DE', relief: 'dunes' },
+  tundra: { ground: '#B4D1E5', alt: '#AACADF', high: '#E9F2F8', beach: '#C6DDEC', walk: '#FFFFFF', relief: 'peaks' },
+  blossom: { ground: '#F5CCA9', alt: '#EFC19C', high: '#F9DCC2', beach: '#F7E6C4', walk: '#FFF6E6', relief: 'terraces' },
+};
+for (const B of Object.values(BIOMES)) for (const k of ['ground', 'alt', 'high', 'beach', 'walk']) B[k + 'C'] = col(B[k]);
+const DEFS = [
+  { domain: 'Algebra', lon: -4, lat: 10, biome: 'meadow', seed: 11 },
+  { domain: 'Problem Solving & Data', lon: 62, lat: -17, biome: 'forest', seed: 23 },
+  { domain: 'Geometry & Trig', lon: 146, lat: 14, biome: 'savanna', seed: 37 },
+  { domain: 'Reading & Writing', lon: 217, lat: -10, biome: 'tundra', seed: 41 },
+  { domain: 'Advanced Math', lon: 289, lat: 15, biome: 'blossom', seed: 53 },
+];
+const dirLL = (lon, lat) => new THREE.Vector3(Math.cos(lat * DEG) * Math.sin(lon * DEG), Math.sin(lat * DEG), Math.cos(lat * DEG) * Math.cos(lon * DEG));
+function toSphere(K, x, y, out = new THREE.Vector3()) {
+  const d = Math.hypot(x, y);
+  if (d < 1e-9) return out.copy(K.c);
+  const s = Math.sin(d) / d, c = Math.cos(d);
+  return out.set(K.c.x * c + (K.e.x * x + K.n.x * y) * s, K.c.y * c + (K.e.y * x + K.n.y * y) * s, K.c.z * c + (K.e.z * x + K.n.z * y) * s);
+}
+
+/** A winding road: greedy meander with a sinusoidal preferred turn, kept compact and self-avoiding. */
+function layoutRoad(n, seed, step) {
+  const rnd = mulberry32(seed);
+  let best = null, bestScore = Infinity;
+  for (let attempt = 0; attempt < 90; attempt++) {
+    const phase = rnd() * TAU, freq = 0.3 + rnd() * 0.5, amp = 0.3 + rnd() * 0.6, pull = 0.08 + rnd() * 0.2;
+    const pts = [[0, 0]];
+    let h = rnd() * TAU, cx = 0, cy = 0;
+    for (let i = 1; i < n; i++) {
+      const [px, py] = pts[i - 1];
+      let bc = null, bcost = Infinity;
+      for (let s = -12; s <= 12; s++) {
+        const a = (s / 12) * 1.1, hh = h + a, qx = px + Math.cos(hh) * step, qy = py + Math.sin(hh) * step;
+        let cost = (a - amp * Math.sin(i * freq + phase)) ** 2;
+        cost += pull * ((qx - cx) ** 2 + (qy - cy) ** 2) / (step * step);
+        for (let j = 0; j < i - 1; j++) { const d = Math.hypot(qx - pts[j][0], qy - pts[j][1]) / step; if (d < 2.05) cost += (2.05 - d) ** 2 * 9; }
+        if (cost < bcost) { bcost = cost; bc = [qx, qy, hh]; }
+      }
+      pts.push([bc[0], bc[1]]); h = bc[2];
+      cx = (cx * i + bc[0]) / (i + 1); cy = (cy * i + bc[1]) / (i + 1);
+    }
+    let minD = Infinity;
+    for (let i = 0; i < n; i++) for (let j = i + 3; j < n; j++) minD = Math.min(minD, Math.hypot(pts[i][0] - pts[j][0], pts[i][1] - pts[j][1]) / step);
+    let rg = 0; for (const p of pts) rg += (p[0] - cx) ** 2 + (p[1] - cy) ** 2;
+    rg = Math.sqrt(rg / n) / step;
+    const score = rg + (minD < 1.9 ? 50 + (1.9 - minD) * 40 : 0);
+    if (score < bestScore) { bestScore = score; best = pts.map((p) => [p[0] - cx, p[1] - cy]); }
+  }
+  // Principal axis → east-west, so continents lie wide like the screen.
+  let sxx = 0, syy = 0, sxy = 0;
+  for (const [x, y] of best) { sxx += x * x; syy += y * y; sxy += x * y; }
+  const ang = 0.5 * Math.atan2(2 * sxy, sxx - syy), ca = Math.cos(-ang), sa = Math.sin(-ang);
+  return best.map(([x, y]) => [x * ca - y * sa, x * sa + y * ca]);
+}
+function catmull2(pts, seg) {
+  const out = [], n = pts.length;
+  for (let i = 0; i < n - 1; i++) {
+    const p0 = pts[Math.max(0, i - 1)], p1 = pts[i], p2 = pts[i + 1], p3 = pts[Math.min(n - 1, i + 2)];
+    for (let s = 0; s < seg; s++) {
+      const t = s / seg, t2 = t * t, t3 = t2 * t;
+      const f = (k) => 0.5 * (2 * p1[k] + (-p0[k] + p2[k]) * t + (2 * p0[k] - 5 * p1[k] + 4 * p2[k] - p3[k]) * t2 + (-p0[k] + 3 * p1[k] - 3 * p2[k] + p3[k]) * t3);
+      out.push({ x: f(0), y: f(1), k: i, f: t });
+    }
+  }
+  out.push({ x: pts[n - 1][0], y: pts[n - 1][1], k: n - 2, f: 1 });
+  return out;
+}
+const leafGroups = (n) => (n.children.every((c) => !c.children.length) ? [n] : n.children.flatMap(leafGroups));
+
+const conts = DEFS.map((def, ci) => {
+  const dom = graph.domains.find((d) => d.label === def.domain);
+  const c = dirLL(def.lon, def.lat), e = new THREE.Vector3(0, 1, 0).cross(c).normalize(), n = c.clone().cross(e).normalize();
+  const K = { ci, def, dom, c, e, n, biome: def.biome, B: BIOMES[def.biome], hue: DOMAIN_HUES[def.domain], hi: 0 };
+  K.seq = [];
+  dom.children.forEach((t, ti) => { for (const g of leafGroups(t)) for (const l of g.children) K.seq.push({ l, t, ti, g }); });
+  K.p2 = layoutRoad(K.seq.length, def.seed * 7919 + 3, STEP);
+  const rnd = mulberry32(def.seed * 104729);
+  const dense = catmull2(K.p2, 12);
+  // Road samples in 3D.
+  K.dense = dense.map((s) => ({ ...s, d: toSphere(K, s.x, s.y) }));
+  const S = new Float32Array(dense.length * 3);
+  K.sTopic = new Int16Array(dense.length); K.sGroup = new Int16Array(dense.length);
+  K.dense.forEach((s, i) => {
+    S[i * 3] = s.d.x; S[i * 3 + 1] = s.d.y; S[i * 3 + 2] = s.d.z;
+    const ref = K.seq[s.f < 0.5 ? s.k : s.k + 1];
+    K.sTopic[i] = ref.ti; K.sGroup[i] = ref.g.id;
+  });
+  K.samples = S;
+  // Land: discs along the road plus a few blobs for an organic coast.
+  const discs = [];
+  K.dense.forEach((s, i) => { if (i % 2 === 0) discs.push([s.x, s.y, LAND_R * (0.9 + 0.3 * rnd())]); });
+  for (let b = 0; b < 11; b++) {
+    const s = dense[Math.floor(rnd() * dense.length)], a = rnd() * TAU, r = 0.06 + rnd() * 0.06;
+    discs.push([s.x + Math.cos(a) * (LAND_R * 0.8 + r * 0.3), s.y + Math.sin(a) * (LAND_R * 0.8 + r * 0.3), r]);
+  }
+  const D = new Float32Array(discs.length * 4);
+  let ext = 0, exX = 0, exY = 0;
+  discs.forEach(([x, y, r], i) => {
+    const d = toSphere(K, x, y); D[i * 4] = d.x; D[i * 4 + 1] = d.y; D[i * 4 + 2] = d.z; D[i * 4 + 3] = 1 / r;
+    ext = Math.max(ext, Math.hypot(x, y) + r); exX = Math.max(exX, Math.abs(x) + r * 0.8); exY = Math.max(exY, Math.abs(y) + r * 0.8);
+  });
+  K.discs = D; K.ext = ext; K.exX = exX; K.exY = exY; K.cosBound = Math.cos(ext + 0.1);
+  K.lakes = [];
+  K.landmarks = [];
+  K.topics = dom.children.map((t, ti) => ({ t, ti, L: [] }));
+  return K;
+});
+// Tiny islands (one carries the lighthouse).
+const ISLANDS = [{ d: dirLL(-38, 26), r: 0.034 }, { d: dirLL(112, -38), r: 0.026 }, { d: dirLL(252, 30), r: 0.024 }, { d: dirLL(182, -42), r: 0.02 }];
+
+const TR = { ci: -1, land: -9, h: 0, ti: -1, gid: -1, dRoad: 9, island: 0, lake: 0, ice: 0 };
+function relief(b, x, y, z) {
+  switch (b) {
+    case 'hills': return 0.017 * Math.max(0, 0.3 + fbm3(x * 6.5, y * 6.5, z * 6.5, 2));
+    case 'soft': return 0.011 * Math.max(0, 0.4 + fbm3(x * 8 + 3, y * 8, z * 8, 2));
+    case 'dunes': { const n = fbm3(x * 3, y * 3, z * 3, 2); return 0.006 * (0.5 + 0.5 * Math.sin((x * 0.6 + z * 0.8 + y * 0.3) * 62 + n * 6)); }
+    case 'peaks': { const n = 1 - Math.abs(fbm3(x * 5.5 + 7, y * 5.5, z * 5.5, 3)) * 2.4; return 0.05 * Math.pow(Math.max(0, n - 0.2), 1.5); }
+    case 'terraces': { const n = clamp(0.5 + 0.7 * fbm3(x * 5 + 11, y * 5, z * 5, 2), 0, 0.999) * 4; const fl = Math.floor(n); return 0.009 * (fl + smoothstep(0.7, 1, n - fl)); }
+  }
+  return 0;
+}
+function terrainAt(x, y, z) {
+  let best = -9, bc = -1;
+  for (let ci = 0; ci < conts.length; ci++) {
+    const K = conts[ci];
+    if (x * K.c.x + y * K.c.y + z * K.c.z < K.cosBound) continue;
+    const D = K.discs; let m = -9;
+    for (let k = 0; k < D.length; k += 4) { const dx = x - D[k], dy = y - D[k + 1], dz = z - D[k + 2]; const v = 1 - Math.sqrt(dx * dx + dy * dy + dz * dz) * D[k + 3]; if (v > m) m = v; }
+    m += 0.3 * fbm3(x * 4.6 + ci * 9.1, y * 4.6 - ci * 3.3, z * 4.6 + ci * 5.7, 3) + 0.12 * fbm3(x * 11 + ci, y * 11, z * 11, 2);
+    if (m > best) { best = m; bc = ci; }
+  }
+  TR.ci = bc; TR.land = best; TR.h = 0; TR.ti = -1; TR.gid = -1; TR.dRoad = 9; TR.island = 0; TR.lake = 0; TR.ice = 0;
+  if (bc >= 0 && best > -0.6) {
+    const K = conts[bc], S = K.samples;
+    let md = Infinity, mi = 0;
+    for (let k = 0; k < S.length; k += 3) { const dx = x - S[k], dy = y - S[k + 1], dz = z - S[k + 2]; const d = dx * dx + dy * dy + dz * dz; if (d < md) { md = d; mi = k / 3; } }
+    TR.dRoad = Math.sqrt(md); TR.ti = K.sTopic[mi]; TR.gid = K.sGroup[mi];
+    if (best > 0) {
+      const rise = smoothstep(0, 0.12, best), flat = smoothstep(0.024, 0.072, TR.dRoad), inland = smoothstep(0.04, 0.32, best);
+      TR.h = H_BASE * rise + relief(K.B.relief, x, y, z) * flat * inland;
+      for (const lk of K.lakes) {
+        const dx = x - lk.d.x, dy = y - lk.d.y, dz = z - lk.d.z, v = 1 - Math.sqrt(dx * dx + dy * dy + dz * dz) / lk.r;
+        if (v > 0) { TR.lake = Math.max(TR.lake, v); TR.h = Math.min(TR.h, H_BASE * 0.55); }
+      }
+    }
+  }
+  if (best <= 0) {
+    TR.island = -9;
+    for (const I of ISLANDS) {
+      const dx = x - I.d.x, dy = y - I.d.y, dz = z - I.d.z;
+      const v = 1 - Math.sqrt(dx * dx + dy * dy + dz * dz) / I.r + 0.25 * fbm3(x * 20, y * 20, z * 20, 2);
+      if (v > TR.island) TR.island = v;
+    }
+    if (TR.island > 0) TR.h = H_BASE * 0.7 * smoothstep(0, 0.35, TR.island);
+    const ice = Math.abs(y) - 0.94 + 0.022 * fbm3(x * 9, y * 9, z * 9, 2);
+    if (ice > 0) { TR.ice = ice; TR.h = Math.max(TR.h, 0.005 * smoothstep(0, 0.02, ice)); }
+  }
+  return TR;
+}
+
+// Lessons → landmarks on the roads.
+const LMS = [], LM = new Map();
+for (const K of conts) {
+  K.seq.forEach((s, i) => {
+    const d = toSphere(K, K.p2[i][0], K.p2[i][1]);
+    const L = {
+      lesson: s.l, K, i, topic: s.t, ti: s.ti, group: s.g, dir: d,
+      pos: d.clone().multiplyScalar(R * (1 + H_BASE)), q: new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), d),
+      v: vkey(s.l), shown: 'ghost', lit: false, litT: 0, pop: -1, rise: -1, towerK: 0.62, flagK: 0, hoverK: 0, nextK: 0,
+      roof: STATE_C.locked.clone(), wall: WALL_LOCK.clone(), plaza: PLAZA_LOCK.clone(), colFrom: null, colT0: -1,
+      scr: { x: 0, y: 0, ty: 0, facing: 0, vis: false, on: false, r: 0 }, world: new THREE.Vector3(),
+    };
+    L.q.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), 0.6));
+    LMS.push(L); LM.set(s.l.id, L); K.landmarks.push(L); K.topics[s.ti].L.push(L);
+  });
+}
+// Lakes (meadow & tundra): inland, away from the road.
+for (const K of conts) {
+  if (K.biome !== 'meadow' && K.biome !== 'tundra') continue;
+  const rnd = mulberry32(K.def.seed * 9301), want = K.biome === 'meadow' ? 3 : 2;
+  for (let a = 0; a < 400 && K.lakes.length < want; a++) {
+    const ang = rnd() * TAU, rr = Math.sqrt(rnd()) * K.ext * 0.9, d = toSphere(K, Math.cos(ang) * rr, Math.sin(ang) * rr);
+    const r = 0.03 + rnd() * 0.014, t = terrainAt(d.x, d.y, d.z);
+    if (t.ci !== K.ci || t.land < 0.3 || t.dRoad < r + 0.035) continue;
+    if (K.lakes.some((o) => o.d.distanceTo(d) < o.r + r + 0.04)) continue;
+    K.lakes.push({ d, r });
+  }
+}
+
+// ════════════════════════ Renderer & scene ════════════════════════
+const canvas = document.getElementById('gl');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: 'high-performance' });
+renderer.setClearColor(0x000000, 0);
+let W = innerWidth, H = innerHeight, DPR = Math.min(devicePixelRatio || 1, 2);
+renderer.setPixelRatio(DPR); renderer.setSize(W, H, false);
+const scene = new THREE.Scene();
+const FOV = 30;
+const camera = new THREE.PerspectiveCamera(FOV, W / H, 0.01, 200);
+scene.add(new THREE.HemisphereLight(0xEFF8FF, 0x8EA5C4, 0.6));
+const sun = new THREE.DirectionalLight(0xFFFFFF, 0.74); sun.position.set(-1.7, 2.1, 4.2); scene.add(sun);
+const planet = new THREE.Group(); scene.add(planet);
+
+function gradTex(v) { const d = new Uint8Array(v.length * 4); v.forEach((x, i) => d.set([x, x, x, 255], i * 4)); const t = new THREE.DataTexture(d, v.length, 1, THREE.RGBAFormat); t.minFilter = t.magFilter = THREE.NearestFilter; t.generateMipmaps = false; t.needsUpdate = true; return t; }
+const GRAD = gradTex([150, 205, 255]), GRAD_SOFT = gradTex([205, 232, 255]);
+const toon = (o = {}) => new THREE.MeshToonMaterial({ gradientMap: GRAD, ...o });
+const inkMat = new THREE.MeshBasicMaterial({ color: INK, side: THREE.BackSide });
+
+function icosphere(level) {
+  const t = (1 + Math.sqrt(5)) / 2, v = [];
+  const push = (x, y, z) => { const l = Math.hypot(x, y, z); v.push(x / l, y / l, z / l); return v.length / 3 - 1; };
+  [[-1, t, 0], [1, t, 0], [-1, -t, 0], [1, -t, 0], [0, -1, t], [0, 1, t], [0, -1, -t], [0, 1, -t], [t, 0, -1], [t, 0, 1], [-t, 0, -1], [-t, 0, 1]].forEach((p) => push(...p));
+  let f = [0, 11, 5, 0, 5, 1, 0, 1, 7, 0, 7, 10, 0, 10, 11, 1, 5, 9, 5, 11, 4, 11, 10, 2, 10, 7, 6, 7, 1, 8, 3, 9, 4, 3, 4, 2, 3, 2, 6, 3, 6, 8, 3, 8, 9, 4, 9, 5, 2, 4, 11, 6, 2, 10, 8, 6, 7, 9, 8, 1];
+  for (let l = 0; l < level; l++) {
+    const cache = new Map(), nf = [];
+    const mid = (a, b) => { const k = a < b ? a * 65536 + b : b * 65536 + a; let m = cache.get(k); if (m === undefined) { m = push(v[a * 3] + v[b * 3], v[a * 3 + 1] + v[b * 3 + 1], v[a * 3 + 2] + v[b * 3 + 2]); cache.set(k, m); } return m; };
+    for (let i = 0; i < f.length; i += 3) { const a = f[i], b = f[i + 1], c = f[i + 2], ab = mid(a, b), bc = mid(b, c), ca = mid(c, a); nf.push(a, ab, ca, b, bc, ab, c, ca, bc, ab, bc, ca); }
+    f = nf;
+  }
+  return { pos: new Float32Array(v), index: f };
+}
+
+// ── Planet terrain ──
+const OCEAN_DEEP = col('#2F9AE6'), OCEAN_MID = col('#47AEEE'), OCEAN_SHALLOW = col('#7ED2F7'), OCEAN_FOAM = col('#C4ECFF');
+const LAKE_C = col('#5FC6F7'), ICE_LAKE = col('#B9E6FA'), ICE_C = col('#F4FAFE'), ISLAND_SAND = col('#F4E3B1'), ISLAND_GRASS = col('#9ED36A');
+const LOCK_TINT = col('#C3CCD6');
+const sphere6 = icosphere(6);
+const NV = sphere6.pos.length / 3;
+const pPos = new Float32Array(NV * 3), pCol = new Float32Array(NV * 3), pBase = new Float32Array(NV * 3), pCont = new Float32Array(NV), pGroup = new Int16Array(NV).fill(-1);
+{
+  const c = new THREE.Color();
+  for (let i = 0; i < NV; i++) {
+    const x = sphere6.pos[i * 3], y = sphere6.pos[i * 3 + 1], z = sphere6.pos[i * 3 + 2];
+    const t = terrainAt(x, y, z);
+    const r = R * (1 + t.h);
+    pPos[i * 3] = x * r; pPos[i * 3 + 1] = y * r; pPos[i * 3 + 2] = z * r;
+    pCont[i] = 5;
+    if (t.ci >= 0 && t.land > 0) {
+      const K = conts[t.ci], B = K.B;
+      pCont[i] = t.ci; pGroup[i] = t.gid;
+      c.copy(t.ti % 2 ? B.altC : B.groundC);
+      const rel = t.h - H_BASE;
+      if (rel > 0.004) c.lerp(B.highC, smoothstep(0.004, 0.03, rel) * (K.biome === 'tundra' ? 0.65 : 0.8));
+      if (t.land < 0.07 && K.biome !== 'tundra') c.lerp(B.beachC, 1 - smoothstep(0.03, 0.07, t.land));
+      if (t.lake > 0) c.copy(K.biome === 'tundra' ? ICE_LAKE : LAKE_C).lerp(B.beachC, t.lake < 0.18 ? 0.55 : 0);
+    } else if (t.island > 0) {
+      c.copy(t.island > 0.4 ? ISLAND_GRASS : ISLAND_SAND);
+    } else if (t.ice > 0) {
+      c.copy(ICE_C);
+    } else {
+      const prox = t.land;
+      c.copy(OCEAN_MID).lerp(OCEAN_DEEP, smoothstep(-0.35, -1.6, prox));
+      if (prox > -0.28) c.lerp(OCEAN_SHALLOW, smoothstep(-0.28, -0.04, prox) * 0.85);
+      if (prox > -0.05) c.lerp(OCEAN_FOAM, smoothstep(-0.05, 0, prox) * 0.6);
+      if (t.island > -0.4 && t.island <= 0) c.lerp(OCEAN_SHALLOW, smoothstep(-0.4, 0, t.island) * 0.8);
+    }
+    pBase[i * 3] = c.r; pBase[i * 3 + 1] = c.g; pBase[i * 3 + 2] = c.b;
+  }
+}
+const groupLocked = new Map(); // leaf-group id → locked tint 0..1
+for (const L of LMS) groupLocked.set(L.group.id, L.group.unlocked ? 0 : 1);
+function paintTerrain() {
+  for (let i = 0; i < NV; i++) {
+    const k = pGroup[i] >= 0 ? groupLocked.get(pGroup[i]) || 0 : 0;
+    pCol[i * 3] = lerp(pBase[i * 3], LOCK_TINT.r, k * 0.6);
+    pCol[i * 3 + 1] = lerp(pBase[i * 3 + 1], LOCK_TINT.g, k * 0.6);
+    pCol[i * 3 + 2] = lerp(pBase[i * 3 + 2], LOCK_TINT.b, k * 0.6);
+  }
+}
+paintTerrain();
+const planetGeo = new THREE.BufferGeometry();
+planetGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
+planetGeo.setAttribute('color', new THREE.BufferAttribute(pCol, 3));
+planetGeo.setAttribute('aCont', new THREE.BufferAttribute(pCont, 1));
+planetGeo.setIndex(sphere6.index);
+planetGeo.computeVertexNormals();
+const HI = { value: [0, 0, 0, 0, 0, 0] };
+const planetMat = toon({ vertexColors: true });
+planetMat.onBeforeCompile = (sh) => {
+  sh.uniforms.uHi = HI;
+  sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nattribute float aCont;\nuniform float uHi[6];\nvarying float vHi;')
+    .replace('#include <begin_vertex>', '#include <begin_vertex>\nvHi = uHi[int(aCont + 0.5)];');
+  sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying float vHi;')
+    .replace('#include <dithering_fragment>', '#include <dithering_fragment>\ngl_FragColor.rgb = mix(gl_FragColor.rgb, min(gl_FragColor.rgb * 1.08 + 0.07, vec3(1.0)), vHi);');
+};
+const planetMesh = new THREE.Mesh(planetGeo, planetMat);
+planet.add(planetMesh);
+// Silhouette outline: a slightly larger back-faced hull that follows the terrain.
+{
+  const s5 = icosphere(5), n5 = s5.pos.length / 3, hp = new Float32Array(n5 * 3);
+  for (let i = 0; i < n5; i++) {
+    const x = s5.pos[i * 3], y = s5.pos[i * 3 + 1], z = s5.pos[i * 3 + 2], r = R * (1 + terrainAt(x, y, z).h) + 0.0075;
+    hp[i * 3] = x * r; hp[i * 3 + 1] = y * r; hp[i * 3 + 2] = z * r;
+  }
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(hp, 3)); g.setIndex(s5.index);
+  planet.add(new THREE.Mesh(g, inkMat));
+}
+// Atmosphere rim: thin, soft, not rotated (it is a sphere).
+const atmo = new THREE.Mesh(new THREE.SphereGeometry(R * 1.045, 64, 48), new THREE.ShaderMaterial({
+  transparent: true, depthWrite: false,
+  uniforms: { uCol: { value: col('#F4FBFF') } },
+  vertexShader: 'varying vec3 vN; varying vec3 vV; void main(){ vec4 mv = modelViewMatrix * vec4(position,1.0); vN = normalize(normalMatrix * normal); vV = normalize(-mv.xyz); gl_Position = projectionMatrix * mv; }',
+  fragmentShader: 'uniform vec3 uCol; varying vec3 vN; varying vec3 vV; void main(){ float f = 1.0 - max(dot(normalize(vN), normalize(vV)), 0.0); float a = pow(f, 4.0) * 0.5; gl_FragColor = vec4(uCol, a); }',
+}));
+atmo.renderOrder = 5;
+scene.add(atmo);
+
+// ── Geometry helpers ──
+function paint(geo, hex) {
+  const g = geo.index ? geo.toNonIndexed() : geo;
+  g.deleteAttribute('uv');
+  const c = col(hex), n = g.attributes.position.count, a = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) { a[i * 3] = c.r; a[i * 3 + 1] = c.g; a[i * 3 + 2] = c.b; }
+  g.setAttribute('color', new THREE.BufferAttribute(a, 3));
+  return g;
+}
+function merge(geos) {
+  const parts = geos.map((g) => (g.index ? g.toNonIndexed() : g));
+  const n = parts.reduce((a, g) => a + g.attributes.position.count, 0);
+  const out = new THREE.BufferGeometry(), hasC = parts.every((g) => g.attributes.color);
+  const P = new Float32Array(n * 3), N = new Float32Array(n * 3), Cc = hasC ? new Float32Array(n * 3) : null;
+  let o = 0;
+  for (const g of parts) { P.set(g.attributes.position.array, o * 3); N.set(g.attributes.normal.array, o * 3); if (Cc) Cc.set(g.attributes.color.array, o * 3); o += g.attributes.position.count; }
+  out.setAttribute('position', new THREE.BufferAttribute(P, 3)); out.setAttribute('normal', new THREE.BufferAttribute(N, 3));
+  if (Cc) out.setAttribute('color', new THREE.BufferAttribute(Cc, 3));
+  return out;
+}
+function inst(geo, mat, n, color = true) {
+  const m = new THREE.InstancedMesh(geo, mat, n);
+  m.frustumCulled = false; m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  if (color) m.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(n * 3).fill(1), 3);
+  return m;
+}
+function hullOf(mesh, geo) { const h = new THREE.InstancedMesh(geo, inkMat, mesh.count); h.frustumCulled = false; h.instanceMatrix = mesh.instanceMatrix; return h; }
+const _m = new THREE.Matrix4(), _s = new THREE.Vector3(), _v = new THREE.Vector3(), _q = new THREE.Quaternion(), _c = new THREE.Color();
+const UP = new THREE.Vector3(0, 1, 0);
+
+// ── Landmarks: plaza, little tower (walls + state-coloured roof), flag when mastered ──
+const NL = LMS.length;
+const G_PLAZA = new THREE.CylinderGeometry(0.0158, 0.017, 0.004, 24).translate(0, 0.0005, 0);
+const G_WALLS = new THREE.CylinderGeometry(0.0062, 0.0068, 0.014, 14).translate(0, 0.0095, 0);
+const G_ROOF = new THREE.ConeGeometry(0.0098, 0.0125, 14).translate(0, 0.0227, 0);
+const G_FLAG = (() => {
+  const pole = paint(new THREE.CylinderGeometry(0.0007, 0.0007, 0.0125, 5).translate(0, 0.0335, 0), '#173A66');
+  const fl = new THREE.BufferGeometry();
+  fl.setAttribute('position', new THREE.BufferAttribute(new Float32Array([0, 0.0398, 0, 0, 0.0338, 0, 0.0085, 0.0368, 0, 0, 0.0338, 0, 0, 0.0398, 0, 0.0085, 0.0368, 0]), 3));
+  fl.computeVertexNormals();
+  return merge([pole, paint(fl, '#FFFFFF')]);
+})();
+const plazaMesh = inst(G_PLAZA, toon(), NL), plazaHull = hullOf(plazaMesh, new THREE.CylinderGeometry(0.0158 * 1.13, 0.017 * 1.13, 0.0056, 24).translate(0, 0.0005, 0));
+const wallsMesh = inst(G_WALLS, toon(), NL), roofMesh = inst(G_ROOF, toon(), NL);
+roofMesh.instanceMatrix = wallsMesh.instanceMatrix;
+const towerHull = hullOf(wallsMesh, merge([new THREE.CylinderGeometry(0.0062 * 1.24, 0.0068 * 1.24, 0.0146, 14).translate(0, 0.0095, 0), new THREE.ConeGeometry(0.0098 * 1.17, 0.0125 * 1.14, 14).translate(0, 0.0228, 0)]));
+const flagMesh = inst(G_FLAG, toon({ vertexColors: true, side: THREE.DoubleSide }), NL);
+planet.add(plazaHull, plazaMesh, towerHull, wallsMesh, roofMesh, flagMesh);
+const towerTop = 0.029, flagTop = 0.04;
+
+// ── Road ribbons (one mesh): walked = solid path, still to walk = stepping-stone dots ──
+const ROAD = { uLit: { value: 0 } };
+const roadIdx = []; // per continent: vertex ranges
+const roadGeo = (() => {
+  const pos = [], side = [], u = [], walk = [], segK = [], segF = [], cont = [], idx = [];
+  let base = 0;
+  for (const K of conts) {
+    const d = K.dense, rr = R * (1 + H_BASE) + 0.0012;
+    let acc = 0;
+    for (let i = 0; i < d.length; i++) {
+      const p = d[i].d, a = d[Math.max(0, i - 1)].d, b = d[Math.min(d.length - 1, i + 1)].d;
+      if (i > 0) acc += p.distanceTo(d[i - 1].d);
+      const T = b.clone().sub(a).normalize(), S = p.clone().cross(T).normalize().multiplyScalar(ROAD_HALF);
+      const c = p.clone().multiplyScalar(rr);
+      for (const sg of [1, -1]) {
+        pos.push(c.x + S.x * sg, c.y + S.y * sg, c.z + S.z * sg); side.push(sg); u.push(acc);
+        walk.push(K.B.walkC.r, K.B.walkC.g, K.B.walkC.b); segK.push(d[i].k); segF.push(d[i].f); cont.push(K.ci);
+      }
+      if (i > 0) { const v0 = base + (i - 1) * 2; idx.push(v0, v0 + 1, v0 + 2, v0 + 1, v0 + 3, v0 + 2); }
+    }
+    roadIdx.push([base, d.length * 2]);
+    base += d.length * 2;
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(pos.map((v, i) => v), 3));
+  g.setAttribute('aSide', new THREE.Float32BufferAttribute(side, 1));
+  g.setAttribute('aU', new THREE.Float32BufferAttribute(u, 1));
+  g.setAttribute('aWalk', new THREE.Float32BufferAttribute(walk, 3));
+  const n = side.length;
+  for (const k of ['aOrder', 'aDraw', 'aLimit', 'aBase']) g.setAttribute(k, new THREE.BufferAttribute(new Float32Array(n), 1));
+  g.userData = { segK, segF, cont };
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+})();
+const roadMat = toon({ transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
+roadMat.extensions = { derivatives: true };
+roadMat.onBeforeCompile = (sh) => {
+  sh.uniforms.uLit = ROAD.uLit;
+  sh.vertexShader = sh.vertexShader.replace('#include <common>', `#include <common>
+attribute float aSide; attribute float aU; attribute float aOrder; attribute float aDraw; attribute float aLimit; attribute float aBase; attribute vec3 aWalk;
+varying float vSide; varying float vU; varying float vOrder; varying float vDraw; varying float vLimit; varying float vBase; varying vec3 vWalk;`)
+    .replace('#include <begin_vertex>', `#include <begin_vertex>
+vSide = aSide; vU = aU; vOrder = aOrder; vDraw = aDraw; vLimit = aLimit; vBase = aBase; vWalk = aWalk;`);
+  sh.fragmentShader = sh.fragmentShader.replace('#include <common>', `#include <common>
+uniform float uLit;
+varying float vSide; varying float vU; varying float vOrder; varying float vDraw; varying float vLimit; varying float vBase; varying vec3 vWalk;`)
+    .replace('vec4 diffuseColor = vec4( diffuse, opacity );', `
+float prog = max(vBase, min(vLimit, uLit - vOrder));
+float aw = fwidth(vDraw) + 0.0001;
+float walked = prog <= 0.0 ? 0.0 : prog >= 1.0 ? 1.0 : smoothstep(prog + aw, prog - aw, vDraw);
+float e = abs(vSide);
+float sp = 0.0118;
+float fu = (fract(vU / sp) - 0.5) * sp / ${ROAD_HALF.toFixed(5)};
+float r = length(vec2(fu, vSide));
+float dotA = 1.0 - smoothstep(0.5, 0.62, r);
+vec3 path = mix(vWalk, vWalk * vec3(0.72, 0.68, 0.62), smoothstep(0.7, 0.86, e));
+vec3 colr = mix(vec3(1.0), path, walked);
+float alpha = mix(dotA * 0.82, 1.0 - smoothstep(0.9, 1.0, e), walked);
+vec4 diffuseColor = vec4(colr, alpha);`);
+};
+const roadMesh = new THREE.Mesh(roadGeo, roadMat);
+roadMesh.renderOrder = 1;
+planet.add(roadMesh);
+
+// ── Props: round trees, pines, rocks, little pyramids, a lighthouse ──
+const props = { tree: [], pine: [], rock: [], pyr: [] };
+const PROP_PLAN = {
+  meadow: { tree: 30, rock: 5, canopy: ['#5CB85A', '#6CC163', '#4DA956'] },
+  forest: { tree: 24, pine: 28, rock: 4, canopy: ['#2F8F54', '#3FA669', '#2A7F4B'] },
+  savanna: { tree: 10, pyr: 9, rock: 12, canopy: ['#98B552', '#A7BF5C'] },
+  tundra: { pine: 34, rock: 9, canopy: ['#5E9C86', '#6FA996'] },
+  blossom: { tree: 34, rock: 4, canopy: ['#EE7F8A', '#F49AA2', '#E35D6A'] },
+};
+const ROCK_COL = { meadow: '#A7B2BE', forest: '#9AA7B4', savanna: '#C9A16A', tundra: '#93A6BA', blossom: '#B8A8A2' };
+for (const K of conts) {
+  const plan = PROP_PLAN[K.biome], rnd = mulberry32(K.def.seed * 15731 + 7), placed = [];
+  const want = Object.entries(plan).filter(([k]) => k !== 'canopy');
+  const total = want.reduce((a, [, v]) => a + v, 0);
+  const bag = want.flatMap(([k, v]) => Array(v).fill(k));
+  for (let a = 0; a < 2400 && placed.length < total; a++) {
+    const ang = rnd() * TAU, rr = Math.sqrt(rnd()) * K.ext, d = toSphere(K, Math.cos(ang) * rr, Math.sin(ang) * rr);
+    const t = terrainAt(d.x, d.y, d.z);
+    if (t.ci !== K.ci || t.land < 0.12 || t.dRoad < 0.034 || t.lake > 0) continue;
+    if (placed.some((p) => p.distanceToSquared(d) < 0.024 * 0.024)) continue;
+    let cool = false; for (const lk of K.lakes) if (lk.d.distanceTo(d) < lk.r + 0.012) cool = true;
+    if (cool) continue;
+    placed.push(d);
+    const type = bag[placed.length - 1];
+    props[type].push({ d, h: t.h, s: 0.8 + rnd() * 0.45, rot: rnd() * TAU, c: type === 'rock' ? ROCK_COL[K.biome] : type === 'pyr' ? '#E2B04A' : plan.canopy[Math.floor(rnd() * plan.canopy.length)], K });
+  }
+}
+function placeProps(list, parts) {
+  for (const [geo, mat, colorFn, hull] of parts) {
+    const m = inst(geo, mat, list.length);
+    list.forEach((p, i) => {
+      _q.setFromUnitVectors(UP, p.d).multiply(new THREE.Quaternion().setFromAxisAngle(UP, p.rot));
+      _m.compose(_v.copy(p.d).multiplyScalar(R * (1 + p.h) - 0.0015), _q, _s.set(p.s, p.s, p.s));
+      m.setMatrixAt(i, _m); m.setColorAt(i, _c.set(colorFn(p)));
+    });
+    planet.add(m);
+    if (hull) planet.add(hullOf(m, hull));
+  }
+}
+const G_CANOPY = new THREE.IcosahedronGeometry(0.0088, 1).translate(0, 0.0135, 0);
+const G_TRUNK = new THREE.CylinderGeometry(0.0016, 0.0021, 0.008, 6).translate(0, 0.004, 0);
+const G_PINE = new THREE.ConeGeometry(0.0078, 0.024, 7).translate(0, 0.016, 0);
+const G_ROCK = new THREE.DodecahedronGeometry(0.0062, 0).scale(1, 0.68, 1).translate(0, 0.0022, 0);
+const G_PYR = new THREE.ConeGeometry(0.0118, 0.0145, 4).translate(0, 0.0072, 0);
+const trunkCol = () => '#9A6B4F';
+placeProps(props.tree, [[G_TRUNK, toon(), trunkCol], [G_CANOPY, toon(), (p) => p.c, new THREE.IcosahedronGeometry(0.0088 * 1.14, 1).translate(0, 0.0135, 0)]]);
+placeProps(props.pine, [[G_TRUNK, toon(), trunkCol], [G_PINE, toon(), (p) => p.c, new THREE.ConeGeometry(0.0078 * 1.2, 0.024 * 1.08, 7).translate(0, 0.0158, 0)]]);
+placeProps(props.rock, [[G_ROCK, toon(), (p) => p.c, new THREE.DodecahedronGeometry(0.0062 * 1.17, 0).scale(1, 0.72, 1).translate(0, 0.0022, 0)]]);
+placeProps(props.pyr, [[G_PYR, toon(), (p) => p.c, new THREE.ConeGeometry(0.0118 * 1.14, 0.0145 * 1.1, 4).translate(0, 0.0072, 0)]]);
+// Snow caps on the tundra pines: a small white cone over each one.
+{
+  const caps = inst(new THREE.ConeGeometry(0.0044, 0.0105, 7).translate(0, 0.0232, 0), toon(), props.pine.filter((p) => p.K.biome === 'tundra').length);
+  props.pine.filter((p) => p.K.biome === 'tundra').forEach((p, i) => {
+    _q.setFromUnitVectors(UP, p.d).multiply(new THREE.Quaternion().setFromAxisAngle(UP, p.rot));
+    _m.compose(_v.copy(p.d).multiplyScalar(R * (1 + p.h) - 0.0015), _q, _s.set(p.s * 1.04, p.s * 1.02, p.s * 1.04));
+    caps.setMatrixAt(i, _m); caps.setColorAt(i, _c.set('#FFFFFF'));
+  });
+  planet.add(caps);
+}
+// Lighthouse on the first island.
+{
+  const I = ISLANDS[0], t = terrainAt(I.d.x, I.d.y, I.d.z);
+  const parts = [];
+  const bands = ['#FFFCF2', '#E35D6A', '#FFFCF2', '#E35D6A'];
+  bands.forEach((h, i) => parts.push(paint(new THREE.CylinderGeometry(0.0052 - i * 0.0004, 0.0056 - i * 0.0004, 0.0062, 14).translate(0, 0.0031 + i * 0.0062, 0), h)));
+  parts.push(paint(new THREE.CylinderGeometry(0.0062, 0.0062, 0.0014, 14).translate(0, 0.0255, 0), '#173A66'));
+  parts.push(paint(new THREE.CylinderGeometry(0.0034, 0.0034, 0.0052, 10).translate(0, 0.0288, 0), '#FFF44E'));
+  parts.push(paint(new THREE.ConeGeometry(0.0052, 0.0062, 14).translate(0, 0.0345, 0), '#E35D6A'));
+  const g = merge(parts);
+  const lh = new THREE.Mesh(g, toon({ vertexColors: true }));
+  const hull = new THREE.Mesh(g.clone().scale(1.14, 1.04, 1.14), inkMat);
+  for (const m of [lh, hull]) { m.quaternion.setFromUnitVectors(UP, I.d); m.position.copy(I.d).multiplyScalar(R * (1 + t.h) - 0.001); m.scale.setScalar(1.15); planet.add(m); }
+}
+
+// ── Clouds: soft cover over locked areas, and a few drifting high clouds ──
+const G_PUFF = new THREE.IcosahedronGeometry(1, 2);
+const cloudMat = new THREE.MeshToonMaterial({ gradientMap: GRAD_SOFT, color: 0xFFFFFF });
+const cover = [];
+{
+  const rnd = mulberry32(777);
+  for (const K of conts) {
+    const byGroup = new Map();
+    K.dense.forEach((s, i) => { const gid = K.sGroup[i]; if (!byGroup.has(gid)) byGroup.set(gid, []); byGroup.get(gid).push(s); });
+    for (const [gid, ss] of byGroup) {
+      const g = graph.nodes[gid];
+      if (g.unlocked) continue;
+      for (let i = 0; i < ss.length; i += 4) {
+        const s = ss[i];
+        for (let j = 0; j < 2; j++) {
+          const a = rnd() * TAU, off = 0.012 + rnd() * 0.022;
+          const d = toSphere(K, s.x + Math.cos(a) * off, s.y + Math.sin(a) * off);
+          const r = 0.022 + rnd() * 0.02;
+          cover.push({ gid, d, r, alt: H_BASE + 0.03 + rnd() * 0.012, k: 1, t0: -1, sq: 0.62 + rnd() * 0.15, rot: rnd() * TAU });
+        }
+      }
+    }
+  }
+}
+const coverMesh = inst(G_PUFF, cloudMat, Math.max(1, cover.length), false);
+planet.add(coverMesh);
+const orbit = new THREE.Group(); planet.add(orbit);
+const orbitPuffs = [];
+{
+  const rnd = mulberry32(4242);
+  const spots = [[20, 52], [110, -50], [175, 56], [250, -54], [322, 49], [62, 58]];
+  for (const [lon, lat] of spots) {
+    const c = dirLL(lon, lat), e = new THREE.Vector3(0, 1, 0).cross(c).normalize();
+    const n = 3 + Math.floor(rnd() * 3);
+    for (let i = 0; i < n; i++) {
+      const off = (i - (n - 1) / 2) * 0.045 + (rnd() - 0.5) * 0.01;
+      const d = c.clone().addScaledVector(e, off).normalize();
+      orbitPuffs.push({ d, r: 0.03 + rnd() * 0.022 * (i === Math.floor(n / 2) ? 1.6 : 1), alt: 0.2 + rnd() * 0.02 });
+    }
+  }
+}
+const orbitMesh = inst(G_PUFF, cloudMat, orbitPuffs.length, false);
+orbit.add(orbitMesh);
+function drawCover(now) {
+  cover.forEach((p, i) => {
+    let k = p.k;
+    if (p.t0 >= 0) { const t = clamp((now - p.t0) / 650, 0, 1); k = 1 - easeOut(t); p.k = k; if (t >= 1) p.t0 = -1; }
+    const lift = (1 - k) * 0.03;
+    _q.setFromUnitVectors(UP, p.d).multiply(new THREE.Quaternion().setFromAxisAngle(UP, p.rot));
+    _m.compose(_v.copy(p.d).multiplyScalar(R * (1 + p.alt + lift)), _q, _s.set(p.r * k, p.r * k * p.sq, p.r * k));
+    coverMesh.setMatrixAt(i, _m);
+  });
+  coverMesh.instanceMatrix.needsUpdate = true;
+}
+function drawOrbit(k) {
+  orbitPuffs.forEach((p, i) => {
+    _q.setFromUnitVectors(UP, p.d);
+    _m.compose(_v.copy(p.d).multiplyScalar(R * (1 + p.alt)), _q, _s.set(p.r * k, p.r * k * 0.7, p.r * k));
+    orbitMesh.setMatrixAt(i, _m);
+  });
+  orbitMesh.instanceMatrix.needsUpdate = true;
+}
+
+// ── You: a small rounded capsule pin, floating over your latest landmark ──
+const pin = new THREE.Group();
+{
+  const r = 0.0062, Lh = 0.0058, pts = [];
+  for (let i = 0; i <= 8; i++) { const a = -Math.PI / 2 + (i / 8) * (Math.PI / 2); pts.push(new THREE.Vector2(Math.max(0.0001, Math.cos(a) * r), r + Math.sin(a) * r)); }
+  for (let i = 0; i <= 8; i++) { const a = (i / 8) * (Math.PI / 2); pts.push(new THREE.Vector2(Math.max(0.0001, Math.cos(a) * r), r + Lh + Math.sin(a) * r)); }
+  const body = paint(new THREE.LatheGeometry(pts, 22), '#2F9AE6');
+  const band = paint(new THREE.CylinderGeometry(r * 1.03, r * 1.03, Lh * 0.42, 22, 1, true).translate(0, r + Lh * 0.5, 0), '#FFFCF2');
+  const g = merge([body, band]);
+  const m = new THREE.Mesh(g, toon({ vertexColors: true, side: THREE.DoubleSide }));
+  const h = new THREE.Mesh(merge([new THREE.LatheGeometry(pts, 22)]).scale(1.2, 1.1, 1.2).translate(0, -0.0009, 0), inkMat);
+  pin.add(h, m);
+}
+pin.visible = false;
+planet.add(pin);
+
+// ── Rings: calm pulse under the Next landmark, one burst on completion ──
+const G_RING = new THREE.RingGeometry(0.74, 1, 48).rotateX(-Math.PI / 2);
+const ringMat = (c) => new THREE.MeshBasicMaterial({ color: c, transparent: true, depthWrite: false, opacity: 0, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+const rings = [new THREE.Mesh(G_RING, ringMat(STATE_COL.progress)), new THREE.Mesh(G_RING, ringMat(STATE_COL.progress))];
+const burst = new THREE.Mesh(G_RING, ringMat(STATE_COL.mastered));
+for (const m of [...rings, burst]) { m.renderOrder = 2; m.visible = false; planet.add(m); }
+
+// ════════════════════════ Lighting order (journey) & road state ════════════════════════
+const journey = graph.journey();
+let litOrder = new Map(); // lesson id → order index used by the road shader
+function assignOrders() {
+  litOrder = new Map();
+  let o = 0;
+  for (const l of journey) if (l.state === 'mastered') litOrder.set(l.id, o++);
+  for (const l of journey) if (l.state === 'frontier') litOrder.set(l.id, o++);
+  return o;
+}
+let litTotal = assignOrders();
+const masteredCount0 = journey.filter((l) => l.state === 'mastered').length;
+const BIG = 1e5;
+function segInfo(a, b) {
+  const sa = a.lesson.state, sb = b.lesson.state, oa = litOrder.get(a.lesson.id) ?? BIG, ob = litOrder.get(b.lesson.id) ?? BIG;
+  if (sa === 'mastered' && sb === 'mastered') return { order: Math.max(oa, ob), limit: 1, fwd: oa <= ob };
+  if (sa === 'mastered' && sb === 'frontier') return { order: ob, limit: b.lesson.progress, fwd: true };
+  if (sb === 'mastered' && sa === 'frontier') return { order: oa, limit: a.lesson.progress, fwd: false };
+  return { order: BIG, limit: 0, fwd: true };
+}
+const segBase = new Map(); // `${ci}:${k}` → already drawn fraction (kept when a segment grows)
+function writeRoad(keepDrawn) {
+  const { segK, segF, cont } = roadGeo.userData;
+  const A = roadGeo.attributes, n = segK.length;
+  const infos = conts.map((K) => K.landmarks.slice(0, -1).map((L, k) => segInfo(L, K.landmarks[k + 1])));
+  for (let i = 0; i < n; i++) {
+    const K = conts[cont[i]], k = segK[i], inf = infos[K.ci][k];
+    const f = segF[i];
+    A.aOrder.array[i] = inf.order;
+    A.aDraw.array[i] = inf.fwd ? f : 1 - f;
+    A.aLimit.array[i] = inf.limit;
+    A.aBase.array[i] = keepDrawn ? segBase.get(`${K.ci}:${k}`) ?? 0 : 0;
+  }
+  for (const k of ['aOrder', 'aDraw', 'aLimit', 'aBase']) A[k].needsUpdate = true;
+}
+function snapshotDrawn() {
+  // How much of every segment is drawn right now (read from the road's current attributes, i.e. the
+  // state before this change), so re-writing the road never un-draws anything.
+  const lit = ROAD.uLit.value, { segK, cont } = roadGeo.userData, A = roadGeo.attributes;
+  for (let i = 0; i < segK.length; i++) {
+    const key = `${cont[i]}:${segK[i]}`;
+    const drawn = clamp(Math.max(A.aBase.array[i], Math.min(A.aLimit.array[i], lit - A.aOrder.array[i])), 0, 1);
+    if (drawn > (segBase.get(key) ?? 0)) segBase.set(key, drawn);
+  }
+}
+writeRoad(false);
+
+// ════════════════════════ Camera rig ════════════════════════
+const PMAX = 1.15;
+const rig = { yaw: 0, pitch: 0, alt: 4, yawT: 0, pitchT: 0, altT: 4, vYaw: 0, vPitch: 0 };
+let fitAlt = 4, minAlt = 0.5, maxAlt = 6, lessonAlt = 2.2, ppr = 300, limbPx = 300, center = { x: 0, y: 0 };
+const FZ = R * (1 + H_BASE);
+function tiltFor(alt) { return 0.72 * smoothstep(fitAlt * 0.92, 0.55, alt); }
+function computeFit() {
+  const tanH = Math.tan((FOV / 2) * DEG), aspect = W / H;
+  const rpx = Math.max(110, Math.min(W * 0.44, ((H - (W < 700 ? 210 : 190)) / 2) * 0.92));
+  const alpha = Math.atan((rpx / (H / 2)) * tanH);
+  const old = fitAlt;
+  fitAlt = R / Math.sin(alpha) - FZ;
+  minAlt = 0.62; maxAlt = fitAlt * 1.3;
+  const vUse = (H - 170) / H;
+  for (const K of conts) {
+    const a = Math.max(K.exX / (0.82 * tanH * aspect), K.exY / (0.8 * tanH * vUse));
+    K.contAlt = clamp(a, 0.7, fitAlt * 0.62);
+  }
+  lessonAlt = Math.max(...conts.map((K) => K.contAlt)) * 1.3;
+  return fitAlt / old;
+}
+function applyRig() {
+  planet.rotation.set(rig.pitch, rig.yaw, 0);
+  const s = tiltFor(rig.alt);
+  camera.position.set(0, -Math.sin(s) * rig.alt, FZ + Math.cos(s) * rig.alt);
+  camera.lookAt(0, 0, FZ);
+  planet.updateMatrixWorld(); camera.updateMatrixWorld();
+}
+const yawPitchFor = (d) => [Math.atan2(-d.x, d.z), Math.atan2(d.y, Math.hypot(d.x, d.z))];
+function toScreen(v, out) { _v.copy(v).project(camera); out.x = (_v.x * 0.5 + 0.5) * W; out.y = (-_v.y * 0.5 + 0.5) * H; out.z = _v.z; return out; }
+const _a = { x: 0, y: 0, z: 0 }, _b = { x: 0, y: 0, z: 0 };
+function measure() {
+  toScreen(_v.set(0, 0, FZ), _a); const ax = _a.x, ay = _a.y;
+  toScreen(new THREE.Vector3(Math.sin(0.01) * FZ, 0, Math.cos(0.01) * FZ), _b);
+  ppr = Math.hypot(_b.x - ax, _b.y - ay) / 0.01;
+  toScreen(_v.set(0, 0, 0), _a); center.x = _a.x; center.y = _a.y;
+  const dc = camera.position.length();
+  limbPx = (H / 2) * Math.tan(Math.asin(Math.min(0.999, R / dc))) / Math.tan((FOV / 2) * DEG);
+}
+let flight = null;
+function fly(to, dur) {
+  const from = { yaw: rig.yaw, pitch: rig.pitch, alt: rig.alt };
+  const tgt = { yaw: from.yaw + wrapPi((to.yaw ?? from.yaw) - from.yaw), pitch: clamp(to.pitch ?? from.pitch, -PMAX, PMAX), alt: clamp(to.alt ?? from.alt, minAlt, maxAlt) };
+  const ang = Math.hypot(tgt.yaw - from.yaw, tgt.pitch - from.pitch);
+  rig.vYaw = rig.vPitch = 0;
+  if (reduceMotion) { Object.assign(rig, { yaw: tgt.yaw, pitch: tgt.pitch, alt: tgt.alt, yawT: tgt.yaw, pitchT: tgt.pitch, altT: tgt.alt }); flight = null; return; }
+  flight = { from, to: tgt, t0: performance.now(), dur: (dur ?? clamp(0.55 + ang * 0.1, 0.55, 0.85)) * 1000 };
+}
+function stepFlight(now) {
+  if (!flight) return;
+  const k = clamp((now - flight.t0) / flight.dur, 0, 1), e = easeInOut(k), { from: a, to: b } = flight;
+  rig.yaw = rig.yawT = lerp(a.yaw, b.yaw, e);
+  rig.pitch = rig.pitchT = lerp(a.pitch, b.pitch, e);
+  rig.alt = rig.altT = Math.exp(lerp(Math.log(a.alt), Math.log(b.alt), e));
+  if (k >= 1) flight = null;
+}
+
+// ════════════════════════ Chrome, card, overlay elements ════════════════════════
+let navOn = false;
+const { score, caption } = mountChrome({
+  id: 'tiny-planet',
+  eyebrow: 'Tiny Planet · SAT',
+  title: 'Your SAT world.',
+  tagline: 'Every lesson you’ve learned is a landmark on a little planet. Spin it, zoom in and see where to go next.',
+  gateBackground: 'linear-gradient(180deg, #1E6FBE 0%, #2F9AE6 55%, #5FC6F7 100%)',
+  beginLabel: 'Visit my planet',
+  onBegin: () => startIntro(),
+});
+if (params.has('debug')) { const play = score.sfx; window.__sfxLog = []; score.sfx = (name, o) => { window.__sfxLog.push([Math.round(performance.now()), name]); return play(name, o); }; }
+let lastCardClose = 0;
+const card = createLessonCard(graph, {
+  score, caption,
+  onOpen: (l) => { safe.at = 0; focusLesson(LM.get(l.id)); },
+  onClose: () => { safe.at = 0; lastCardClose = performance.now(); score.sfx('back'); },
+  onComplete: (evt) => onComplete(evt),
+});
+
+const $ = (id) => document.getElementById(id);
+const hudEl = $('hud'), hintEl = $('hint'), skipEl = $('skip'), crumbsEl = $('crumbs'), crumbCur = $('crumbCur');
+const contLbl = $('contLbl'), tipEl = $('tip'), nextEl = $('next'), nextText = $('nextText'), stemEl = $('stem'), topicLayer = $('topicLayer');
+const safe = { list: [], at: 0 };
+function safeRects(now) {
+  if (now - safe.at > 200) {
+    safe.at = now;
+    safe.list = ['.kg-dock', '.kg-sound', '#hud', '.kg-card.open', '#skip:not(.gone)'].map((q) => document.querySelector(q)?.getBoundingClientRect())
+      .filter((r) => r && r.width).map((r) => [r.left - 8, r.top - 8, r.right + 8, r.bottom + 8]);
+  }
+  return safe.list;
+}
+const overlaps = (x, y, w, h, r) => x < r[2] && x + w > r[0] && y < r[3] && y + h > r[1];
+function fits(x, y, w, h, extra) {
+  if (x < 8 || y < 8 || x + w > W - 8 || y + h > H - 8) return false;
+  for (const r of safe.list) if (overlaps(x, y, w, h, r)) return false;
+  if (extra) for (const r of extra) if (overlaps(x, y, w, h, r)) return false;
+  return true;
+}
+
+// HUD
+const hud = { count: 0, score: 400, shown: false };
+function setHud(count, m, popIt) {
+  const sc = projectedScore(m);
+  if (count !== hud.count) { $('hudCount').textContent = count; hud.count = count; if (popIt) { const b = $('hudCount'); b.classList.remove('pop'); void b.offsetWidth; b.classList.add('pop'); } }
+  if (sc !== hud.score) { $('hudScore').textContent = sc; hud.score = sc; }
+}
+$('hudTotal').textContent = graph.stats().total; $('hudGoal').textContent = graph.stats().goalScore;
+function showHud() { if (hud.shown) return; hud.shown = true; hudEl.classList.add('show'); safe.at = 0; }
+// One hint, shown once after the intro, gone after the first interaction.
+const hint = { shownAt: 0, gone: false };
+function showHint() { if (hint.shownAt) return; hintEl.textContent = touchFirst ? 'Drag to spin · pinch to zoom' : 'Drag to spin · scroll to zoom'; hintEl.hidden = false; hint.shownAt = performance.now(); safe.at = 0; setTimeout(dismissHint, 9000); }
+function dismissHint() { if (hint.gone || !hint.shownAt) return; hint.gone = true; hintEl.classList.add('gone'); setTimeout(() => { hintEl.hidden = true; safe.at = 0; }, 950); }
+
+// ════════════════════════ Next recommendation ════════════════════════
+function recommend() {
+  let best = null;
+  for (const l of graph.frontierLessons()) {
+    const L = LM.get(l.id);
+    if (L.shown === 'ghost' || L.shown === 'locked') continue; // still locked on screen (unlock animation pending)
+    if (!best || (l.progress > best.lesson.progress)) best = L;
+  }
+  return best;
+}
+let nextL = null, nextHold = 0;
+
+// ════════════════════════ Pointer state & hover ════════════════════════
+const pointer = { x: -1, y: -1, in: false, movedAt: 0 };
+let hover = null, hoverKey = '', dragging = false, frontCont = 0, frontContPrev = -1;
+const _ray = new THREE.Raycaster(), _ndc = new THREE.Vector2(), _sph = new THREE.Sphere(new THREE.Vector3(), FZ), _hit = new THREE.Vector3(), _qi = new THREE.Quaternion();
+function surfaceUnder(x, y) {
+  _ndc.set((x / W) * 2 - 1, -(y / H) * 2 + 1);
+  _ray.setFromCamera(_ndc, camera);
+  if (!_ray.ray.intersectSphere(_sph, _hit)) return null;
+  _qi.copy(planet.quaternion).invert();
+  return _hit.applyQuaternion(_qi).normalize().clone();
+}
+function computeHover() {
+  if (!navOn || !pointer.in || dragging) return null;
+  if (nextHot) return { kind: 'next', L: nextL };
+  const lessonMode = rig.alt <= lessonAlt;
+  let bestD = 28, bestL = null;
+  for (const L of LMS) {
+    if (!L.scr.vis) continue;
+    if (!lessonMode && L !== nextL) continue;
+    const d = Math.min(Math.hypot(L.scr.x - pointer.x, L.scr.y - pointer.y), Math.hypot(L.scr.x - pointer.x, L.scr.ty - pointer.y));
+    if (d < bestD) { bestD = d; bestL = L; }
+  }
+  if (bestL) return { kind: 'lesson', L: bestL };
+  const d = surfaceUnder(pointer.x, pointer.y);
+  if (!d) return null;
+  const t = terrainAt(d.x, d.y, d.z);
+  if (t.ci >= 0 && t.land > 0 && (!lessonMode || t.ci !== frontCont)) return { kind: 'cont', K: conts[t.ci] };
+  return { kind: 'planet' };
+}
+function setHover(h) {
+  const key = h ? h.kind + ':' + (h.L ? h.L.lesson.id : h.K ? h.K.ci : '') : '';
+  if (key === hoverKey) { hover = h; return; }
+  hover = h; hoverKey = key;
+  if (h && h.kind !== 'planet' && h.kind !== 'next') score.sfx('hover');
+  updateCursor();
+}
+function updateCursor() {
+  canvas.style.cursor = dragging ? 'grabbing' : !hover ? 'default' : hover.kind === 'planet' ? 'grab' : 'pointer';
+}
+
+// ════════════════════════ Input ════════════════════════
+const ptrs = new Map();
+let drag = null, pinch = null;
+function interacted() { if (hint.shownAt) dismissHint(); }
+canvas.addEventListener('pointerdown', (e) => {
+  if (e.button !== undefined && e.button > 0) return;
+  canvas.focus({ preventScroll: true });
+  if (!navOn) { if (intro.started && !intro.done) skipIntro(); return; }
+  try { canvas.setPointerCapture(e.pointerId); } catch { /* synthetic */ }
+  ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  pointer.x = e.clientX; pointer.y = e.clientY; pointer.in = true;
+  if (ptrs.size === 1) {
+    drag = { x0: e.clientX, y0: e.clientY, t0: performance.now(), moved: false, samples: [], touch: e.pointerType === 'touch' };
+  } else if (ptrs.size === 2) {
+    const [a, b] = [...ptrs.values()];
+    pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 };
+    if (drag) drag.moved = true;
+  }
+});
+canvas.addEventListener('pointermove', (e) => {
+  const now = performance.now();
+  if (e.pointerType !== 'touch') { pointer.x = e.clientX; pointer.y = e.clientY; pointer.in = true; pointer.movedAt = now; }
+  const p = ptrs.get(e.pointerId);
+  if (!p || !navOn) return;
+  const dx = e.clientX - p.x, dy = e.clientY - p.y;
+  p.x = e.clientX; p.y = e.clientY;
+  if (ptrs.size >= 2 && pinch) {
+    const [a, b] = [...ptrs.values()];
+    const d = Math.hypot(a.x - b.x, a.y - b.y), mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    const f = pinch.d / Math.max(1, d);
+    rig.altT = rig.alt = clamp(rig.alt * f, minAlt, maxAlt);
+    rotateBy(mx - pinch.mx, my - pinch.my);
+    pinch.d = d; pinch.mx = mx; pinch.my = my;
+    interacted();
+    return;
+  }
+  if (!drag) return;
+  if (!drag.moved && Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) > (drag.touch ? 8 : 4)) {
+    drag.moved = true; dragging = true; flight = null; rig.vYaw = rig.vPitch = 0; interacted(); setHover(null); updateCursor();
+  }
+  if (drag.moved) {
+    rotateBy(dx, dy);
+    drag.samples.push([now, rig.yaw, rig.pitch]);
+    while (drag.samples.length > 2 && now - drag.samples[0][0] > 90) drag.samples.shift();
+  }
+});
+function rotateBy(dx, dy) {
+  rig.yawT += dx / ppr; rig.pitchT = clamp(rig.pitchT + dy / ppr, -PMAX, PMAX);
+  rig.yaw = rig.yawT; rig.pitch = rig.pitchT;
+}
+function endPointer(e) {
+  const p = ptrs.get(e.pointerId);
+  if (!p) return;
+  ptrs.delete(e.pointerId);
+  if (ptrs.size === 1) { pinch = null; if (drag) drag.samples = []; return; }
+  if (ptrs.size > 0) return;
+  pinch = null;
+  const d = drag; drag = null;
+  if (!d) return;
+  if (d.moved) {
+    dragging = false;
+    const s = d.samples, now = performance.now();
+    if (!reduceMotion && s.length >= 2 && now - s[s.length - 1][0] < 70) {
+      const a = s[0], b = s[s.length - 1], dt = Math.max(0.016, (b[0] - a[0]) / 1000);
+      rig.vYaw = clamp((b[1] - a[1]) / dt, -7, 7); rig.vPitch = clamp((b[2] - a[2]) / dt, -4, 4);
+    }
+    updateCursor();
+  } else if (e.type === 'pointerup') {
+    pointer.x = e.clientX; pointer.y = e.clientY; pointer.in = true;
+    clickAt(e.clientX, e.clientY);
+    if (d.touch) pointer.in = false;
+  }
+}
+canvas.addEventListener('pointerup', endPointer);
+canvas.addEventListener('pointercancel', (e) => { endPointer(e); dragging = false; });
+canvas.addEventListener('pointerleave', (e) => { if (e.pointerType !== 'touch' && !ptrs.size) { pointer.in = false; setHover(null); } });
+let wheelQuietAt = 0;
+canvas.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  if (!navOn) return;
+  const now = performance.now();
+  let dy = e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1);
+  const f = Math.exp(clamp(dy, -120, 120) * (e.ctrlKey ? 0.01 : 0.0018));
+  const before = rig.altT;
+  rig.altT = clamp(rig.altT * f, minAlt, maxAlt);
+  if (Math.abs(rig.altT - before) > 1e-5) {
+    if (now - wheelQuietAt > 320) score.sfx(rig.altT < before ? 'zoomIn' : 'zoomOut');
+    flight = null;
+    // Zoom toward what you point at: drift the view toward the surface point under the cursor.
+    if (rig.altT < before) {
+      const d = surfaceUnder(e.clientX, e.clientY);
+      if (d) {
+        const [yp, pp] = yawPitchFor(d), k = clamp(1 - rig.altT / before, 0, 0.4) * 0.9;
+        rig.yawT += wrapPi(yp - rig.yawT) * k; rig.pitchT = clamp(rig.pitchT + (pp - rig.pitchT) * k, -PMAX, PMAX);
+      }
+    }
+    interacted();
+  }
+  wheelQuietAt = now;
+}, { passive: false });
+addEventListener('keydown', (e) => {
+  if (!intro.done && intro.started && ['Escape', ' ', 'Enter'].includes(e.key) && document.activeElement !== skipEl) { skipIntro(); return; }
+  if (!navOn) return;
+  if (e.key === 'Escape') {
+    if (card.lesson || performance.now() - lastCardClose < 120) return;
+    if (rig.alt < fitAlt * 0.85) flyOut();
+    return;
+  }
+  if (document.activeElement && document.activeElement !== canvas && document.activeElement !== document.body) return;
+  const k = { ArrowLeft: [-0.35, 0], ArrowRight: [0.35, 0], ArrowUp: [0, -0.25], ArrowDown: [0, 0.25] }[e.key];
+  if (k) { e.preventDefault(); fly({ yaw: rig.yaw + k[0], pitch: rig.pitch + k[1] }, 0.45); interacted(); }
+  if (e.key === '+' || e.key === '=') { rig.altT = clamp(rig.altT * 0.75, minAlt, maxAlt); interacted(); }
+  if (e.key === '-' || e.key === '_') { rig.altT = clamp(rig.altT / 0.75, minAlt, maxAlt); interacted(); }
+});
+function clickAt(x, y) {
+  interacted();
+  const h = computeHover();
+  setHover(h);
+  if (h && (h.kind === 'lesson' || h.kind === 'next')) { card.open(h.L.lesson); return; }
+  if (h && h.kind === 'cont') { flyToCont(h.K); return; }
+  if (!h) {
+    if (card.lesson) { card.close(); return; }
+    if (rig.alt < fitAlt * 0.85) flyOut();
+  }
+}
+function flyToCont(K) {
+  const [yaw, pitch] = yawPitchFor(K.c);
+  fly({ yaw, pitch, alt: K.contAlt });
+  score.sfx('zoomIn');
+}
+function flyOut() {
+  fly({ alt: fitAlt, pitch: clamp(rig.pitch * 0.5, -0.5, 0.5) });
+  score.sfx('zoomOut');
+}
+function focusLesson(L) {
+  if (!L) return;
+  const [yaw, pitch] = yawPitchFor(L.dir);
+  const cr = card.el.getBoundingClientRect();
+  const covered = !L.scr.vis || !L.scr.on || (L.scr.x > cr.left - 24 && L.scr.x < cr.right + 24 && L.scr.y > cr.top - 24 && L.scr.y < cr.bottom + 24);
+  const needZoom = rig.alt > lessonAlt;
+  if (needZoom || covered) {
+    // On phones the card covers the lower half: aim a little below the landmark so it sits above the card.
+    const lift = W < 700 ? 0.18 * (L.K.contAlt / 3) : 0;
+    fly({ yaw, pitch: pitch - lift, alt: needZoom ? L.K.contAlt * 0.92 : rig.altT });
+    if (needZoom) score.sfx('zoomIn');
+  }
+}
+$('backBtn').addEventListener('click', () => { flyOut(); interacted(); });
+let nextHot = false;
+nextEl.addEventListener('pointerenter', () => { nextHot = true; nextEl.classList.add('hot'); score.sfx('hover'); });
+nextEl.addEventListener('pointerleave', () => { nextHot = false; nextEl.classList.remove('hot'); });
+nextEl.addEventListener('click', () => {
+  if (!nextL) return;
+  interacted();
+  if (callout.mode === 'edge') {
+    const [yaw, pitch] = yawPitchFor(nextL.dir);
+    fly({ yaw, pitch, alt: Math.min(rig.altT, fitAlt) }, 0.75);
+    score.sfx('step');
+  } else card.open(nextL.lesson);
+});
+skipEl.addEventListener('click', () => skipIntro());
+
+// ════════════════════════ Intro ════════════════════════
+const RM = reduceMotion;
+const T_LIGHT0 = RM ? 0.3 : 0.9, T_LIGHT1 = RM ? 1.6 : 3.5, T_FRONT = RM ? 1.7 : 3.75, T_RISER = RM ? 0.4 : 3.0, T_IMPACT = RM ? 2.6 : 5.2, T_END = RM ? 2.9 : 5.9;
+const intro = { started: false, done: false, t0: 0, offset: 0, events: [], impacted: false };
+let youL = null, settle = { yaw: 0, pitch: 0 };
+function latestMastered() { let b = null; for (const L of LMS) if (L.lesson.masteredAt && (!b || L.lesson.masteredAt > b.lesson.masteredAt)) b = L; return b; }
+function computeSettle() {
+  const you = latestMastered(), nx = recommendAll();
+  let d = (nx || you).dir.clone();
+  if (you && nx && you.dir.angleTo(nx.dir) < 1.5) d = you.dir.clone().multiplyScalar(0.42).add(nx.dir.clone().multiplyScalar(0.58)).normalize();
+  const [yaw, pitch] = yawPitchFor(d);
+  settle = { yaw, pitch: clamp(pitch, -0.45, 0.45) };
+}
+function recommendAll() { let best = null; for (const l of graph.frontierLessons()) { const L = LM.get(l.id); if (!best || l.progress > best.lesson.progress) best = L; } return best; }
+// Each lit landmark gets a time in the intro: mastered in mastered-date order, then the frontier.
+{
+  const M = masteredCount0;
+  let i = 0, j = 0;
+  const F = journey.filter((l) => l.state === 'frontier').length;
+  for (const l of journey) {
+    const L = LM.get(l.id);
+    if (l.state === 'mastered') { L.litAt = T_LIGHT0 + (T_LIGHT1 - T_LIGHT0) * (M > 1 ? i / (M - 1) : 1); i++; }
+    else if (l.state === 'frontier') { L.litAt = T_FRONT + 0.35 * (F > 1 ? j / (F - 1) : 1); j++; }
+    else L.litAt = Infinity;
+  }
+}
+const litSeq = LMS.filter((L) => L.litAt < Infinity).sort((a, b) => a.litAt - b.litAt);
+let lastStepSfx = 0;
+function lightUp(L, now, quiet) {
+  if (L.lit) return;
+  L.lit = true;
+  setShown(L, L.v, now, !quiet && !RM);
+  if (!quiet && now - lastStepSfx > 110 && L.scr.facing > 0) { lastStepSfx = now; score.sfx('step'); }
+}
+function setShown(L, v, now, animate) {
+  L.colFrom = { roof: L.roof.clone(), wall: L.wall.clone(), plaza: L.plaza.clone() };
+  L.colT0 = animate ? now : now - 1000;
+  L.shown = v;
+  if (animate) L.pop = now;
+}
+function introEvents() {
+  return [
+    { t: 0, run: () => score.setIntensity(0.16, 0.6) },
+    { t: T_LIGHT0, run: () => { showHud(); score.setIntensity(0.42, 2.5); }, settle: showHud },
+    { t: T_RISER, run: () => { score.sfx('riser'); score.setIntensity(0.7, 2.2); } },
+    { t: T_IMPACT, run: () => impact(true), settle: () => impact(false) },
+    { t: T_END, run: finishIntro, settle: finishIntro },
+  ];
+}
+function introT(now) { return (now - intro.t0) / 1000 + intro.offset; }
+function startIntro() {
+  if (intro.started) return;
+  intro.started = true; intro.t0 = performance.now();
+  intro.events = introEvents();
+  if (intro.offset > 0) for (const ev of intro.events) if (ev.t < intro.offset) { ev.fired = true; ev.settle?.(); }
+  if (intro.offset < T_IMPACT) skipEl.classList.remove('gone');
+  safe.at = 0;
+}
+function skipIntro() {
+  if (!intro.started || intro.done) return;
+  const now = performance.now(), t = introT(now);
+  if (t < T_IMPACT) {
+    intro.offset += T_IMPACT - t;
+    for (const ev of intro.events) if (!ev.fired && ev.t < T_IMPACT) { ev.fired = true; ev.settle?.(); }
+  }
+}
+function impact(withSound) {
+  if (intro.impacted) return;
+  intro.impacted = true;
+  const now = performance.now();
+  for (const L of litSeq) lightUp(L, now, true);
+  youL = latestMastered();
+  pin.visible = !!youL;
+  pinAnim = { from: null, to: youL, t0: withSound && !RM ? now : now - 2000, drop: true };
+  nextL = recommend();
+  if (withSound) {
+    score.sfx('intro');
+    caption('This is your world. Every flag is a lesson you own.', 3800);
+    score.setIntensity(0.82, 0.4); boost = 0.25;
+  }
+  skipEl.classList.add('gone'); safe.at = 0;
+  ROAD.uLit.value = Math.max(ROAD.uLit.value, litTotal);
+  showHud();
+  setHud(graph.stats().mastered, graph.root.m, false);
+}
+function finishIntro() {
+  if (intro.done) return;
+  intro.done = true; navOn = true;
+  if (!intro.impacted) impact(false);
+  for (const ev of intro.events) ev.fired = true;
+  if (!flight) { rig.yawT = rig.yaw; rig.pitchT = rig.pitch; rig.altT = rig.alt; }
+  showHint();
+  safe.at = 0;
+}
+function introUpdate(now) {
+  if (!intro.started) return;
+  const t = introT(now);
+  for (const ev of intro.events) if (!ev.fired && t >= ev.t) { ev.fired = true; ev.run(); }
+  if (intro.done) return;
+  // Camera: spins in from far away and decelerates onto your part of the world.
+  const kA = RM ? 1 : easeOut(clamp(t / 2.8, 0, 1)), kY = RM ? 1 : 1 - Math.pow(1 - clamp(t / T_IMPACT, 0, 1), 2.6);
+  rig.alt = rig.altT = Math.exp(lerp(Math.log(fitAlt * 9), Math.log(fitAlt), kA));
+  rig.yaw = rig.yawT = settle.yaw - 3.9 * (1 - kY);
+  rig.pitch = rig.pitchT = settle.pitch + 0.42 * (1 - kY);
+  for (const L of litSeq) if (!L.lit && t >= L.litAt) lightUp(L, now, false);
+  // Path draws itself in step with the lights.
+  let lit = 0; for (const L of litSeq) lit += clamp((t - L.litAt) / 0.35, 0, 1);
+  ROAD.uLit.value = Math.max(ROAD.uLit.value, lit);
+  const litM = litSeq.filter((L) => L.lit && L.lesson.state === 'mastered').length;
+  setHud(litM, graph.root.m * (litM / Math.max(1, masteredCount0)), false);
+}
+
+// ════════════════════════ Completion ════════════════════════
+let pinAnim = null, boost = 0, burstAt = -1;
+function onComplete(evt) {
+  const now = performance.now();
+  const L = LM.get(evt.lesson.id);
+  if (!L) return;
+  // Road: keep what is drawn, give the finished segments the next order, then let them draw.
+  snapshotDrawn();
+  const ord = Math.ceil(ROAD.uLit.value + 0.001);
+  litOrder.set(L.lesson.id, ord);
+  for (const l of evt.unlocked) litOrder.set(l.id, ord + 1);
+  L.v = 'mastered'; setShown(L, 'mastered', now, !RM);
+  writeRoad(true);
+  roadGrow = { from: ROAD.uLit.value, to: ord + 1, t0: now + 120 };
+  burstAt = now;
+  // Your pin hops to the landmark you just finished.
+  if (youL !== L) { pinAnim = { from: youL, to: L, t0: now + 150, drop: false }; youL = L; }
+  // New ready landmarks pop up a beat later; clouds over freshly opened areas part.
+  for (const l of evt.unlocked) { const U = LM.get(l.id); U.v = vkey(l); U.pendingAt = now + 750; }
+  for (const U of LMS) if (U.lesson.state === 'locked') U.v = 'locked';
+  const opened = new Set();
+  for (const [gid, k] of groupLocked) if (k > 0 && graph.nodes[gid].unlocked) opened.add(gid);
+  if (opened.size) setTimeout(() => {
+    const t0 = performance.now();
+    for (const p of cover) if (opened.has(p.gid) && p.k > 0) p.t0 = t0;
+    for (const gid of opened) groupLocked.set(gid, 0);
+    paintTerrain(); planetGeo.attributes.color.needsUpdate = true;
+  }, 650);
+  setHud(graph.stats().mastered, graph.root.m, true);
+  nextHold = now + 1250;
+  boost = 0.35; score.setIntensity(0.9, 0.5);
+  renderCrumbs(true);
+}
+let roadGrow = null;
+function updateRoad(now) {
+  if (!roadGrow || now < roadGrow.t0) return;
+  const k = clamp((now - roadGrow.t0) / 700, 0, 1);
+  ROAD.uLit.value = lerp(roadGrow.from, roadGrow.to, easeInOut(k));
+  if (k >= 1) roadGrow = null;
+}
+
+// ════════════════════════ Per-frame: landmarks, pin, rings ════════════════════════
+let zsNow = 1.4;
+function zoomScale() {
+  const out = clamp(1.42 * Math.pow(300 / Math.max(120, limbPx), 0.3), 1.42, 1.75);
+  return lerp(1, out, smoothstep(lessonAlt * 0.8, fitAlt * 0.95, rig.alt));
+}
+function landmarkColors(L, now) {
+  let roof, wall, plaza;
+  if (L.shown === 'ghost' || L.shown === 'locked') { roof = ROOF_LOCK; wall = WALL_LOCK; plaza = PLAZA_LOCK; }
+  else { roof = STATE_C[L.shown]; wall = WALL_C; plaza = PLAZA_C; }
+  const k = L.colT0 >= 0 ? clamp((now - L.colT0) / 320, 0, 1) : 1;
+  if (L.colFrom && k < 1) { L.roof.copy(L.colFrom.roof).lerp(roof, k); L.wall.copy(L.colFrom.wall).lerp(wall, k); L.plaza.copy(L.colFrom.plaza).lerp(plaza, k); }
+  else { L.roof.copy(roof); L.wall.copy(wall); L.plaza.copy(plaza); L.colFrom = null; }
+}
+function updateLandmarks(now, dt) {
+  const zs = zsNow;
+  const camPos = camera.position;
+  for (let i = 0; i < NL; i++) {
+    const L = LMS[i];
+    if (L.pendingAt && now >= L.pendingAt) { L.pendingAt = 0; setShown(L, L.v, now, !RM); L.rise = now; if (!L._unlockSfx) { L._unlockSfx = true; if (now - lastUnlockSfx > 300) { lastUnlockSfx = now; score.sfx('unlock'); } } }
+    landmarkColors(L, now);
+    const ghost = L.shown === 'ghost' || L.shown === 'locked';
+    L.towerK = damp(L.towerK, ghost ? 0.6 : 1, 14, dt);
+    L.flagK = damp(L.flagK, L.shown === 'mastered' ? 1 : 0, 9, dt);
+    L.hoverK = damp(L.hoverK, hover && hover.L === L && hover.kind === 'lesson' ? 1 : 0, 18, dt);
+    L.nextK = damp(L.nextK, L === nextL && navOn ? 1 : 0, 8, dt);
+    let pop = 1;
+    if (L.pop >= 0) { const t = (now - L.pop) / 480; if (t >= 1) L.pop = -1; else pop = 1 + 0.4 * Math.sin(Math.PI * t) * (1 - t * 0.4); }
+    if (L.rise >= 0) { const t = (now - L.rise) / 520; if (t >= 1) L.rise = -1; else pop *= 0.4 + 0.6 * easeOutBack(t); }
+    const s = zs * (1 + 0.45 * L.nextK + 0.14 * L.hoverK) * pop;
+    _m.compose(L.pos, L.q, _s.set(s, s, s)); plazaMesh.setMatrixAt(i, _m);
+    const tk = s * L.towerK;
+    _m.compose(L.pos, L.q, _s.set(tk, tk, tk)); wallsMesh.setMatrixAt(i, _m);
+    const fk = s * Math.max(0.0001, L.flagK);
+    _m.compose(L.pos, L.q, _s.set(fk, fk * L.flagK, fk)); flagMesh.setMatrixAt(i, _m);
+    plazaMesh.setColorAt(i, L.plaza); wallsMesh.setColorAt(i, L.wall); roofMesh.setColorAt(i, L.roof);
+    flagMesh.setColorAt(i, STATE_C.mastered);
+    // Screen position + visibility for hit-testing and labels.
+    L.world.copy(L.pos).applyMatrix4(planet.matrixWorld);
+    toScreen(L.world, L.scr);
+    _nrm.copy(L.dir).applyQuaternion(planet.quaternion);
+    L.scr.facing = _nrm.dot(_tc.copy(camPos).sub(L.world).normalize());
+    _top.copy(L.world).addScaledVector(_nrm, towerTop * s * L.towerK);
+    L.scr.ty = toScreen(_top, _b).y;
+    L.scr.on = L.scr.x > -20 && L.scr.x < W + 20 && L.scr.y > -20 && L.scr.y < H + 20 && L.scr.z < 1;
+    L.scr.vis = L.scr.facing > 0.12 && L.scr.on;
+    L.scr.r = 0.0164 * s * ppr * Math.max(0.3, L.scr.facing);
+  }
+  plazaMesh.instanceMatrix.needsUpdate = true; wallsMesh.instanceMatrix.needsUpdate = true; flagMesh.instanceMatrix.needsUpdate = true;
+  plazaMesh.instanceColor.needsUpdate = true; wallsMesh.instanceColor.needsUpdate = true; roofMesh.instanceColor.needsUpdate = true; flagMesh.instanceColor.needsUpdate = true;
+}
+let lastUnlockSfx = 0;
+const _nrm = new THREE.Vector3(), _tc = new THREE.Vector3(), _top = new THREE.Vector3();
+const _pq = new THREE.Quaternion(), _qi2 = new THREE.Quaternion(), _camUp = new THREE.Vector3(), _pd = new THREE.Vector3();
+const _camR = new THREE.Vector3(), _tan = new THREE.Vector3(), _pa = new THREE.Vector3(), _pb = new THREE.Vector3();
+// A spot on a landmark's plaza, just to the viewer's right of its tower: the pin stands there like a little traveller.
+function pinSpot(L, out) {
+  const sL = zsNow * (1 + 0.45 * L.nextK + 0.14 * L.hoverK);
+  _tan.copy(_camR).addScaledVector(L.dir, -_camR.dot(L.dir)).normalize();
+  return out.copy(L.dir).multiplyScalar(FZ + 0.0024 * sL).addScaledVector(_tan, 0.0145 * sL);
+}
+function updatePin(now) {
+  if (!youL || !pin.visible) return;
+  _qi2.copy(planet.quaternion).invert();
+  _camUp.set(0, 1, 0).applyQuaternion(_qi2); _camR.set(1, 0, 0).applyQuaternion(_qi2);
+  const zs = zsNow * 1.55 * lerp(1, 1.25, smoothstep(lessonAlt, fitAlt * 0.95, rig.alt));
+  let lift = RM ? 0 : (0.5 + 0.5 * Math.sin(now / 520)) * 0.0014 * zs;
+  pinSpot(youL, _pa);
+  if (pinAnim) {
+    const hopMs = pinAnim.from ? 620 + Math.min(1, pinAnim.from.dir.angleTo(pinAnim.to.dir)) * 380 : 620;
+    const t = clamp((now - pinAnim.t0) / (pinAnim.drop ? 600 : hopMs), 0, 1);
+    if (pinAnim.drop) lift += (1 - easeOutBack(t)) * 0.08 * zs;
+    else if (pinAnim.from) {
+      const e = easeInOut(t), ang = pinAnim.from.dir.angleTo(pinAnim.to.dir);
+      pinSpot(pinAnim.from, _pb);
+      const r = lerp(_pb.length(), _pa.length(), e);
+      _pa.copy(_pb).lerp(pinSpot(pinAnim.to, _pa), e).setLength(r);
+      lift += Math.sin(Math.PI * e) * Math.min(0.055, 0.022 + ang * 0.05) * zs;
+    }
+    if (t >= 1) { if (!pinAnim.drop && navOn) score.sfx('step'); pinAnim = null; }
+  }
+  // Lean toward screen-up so it reads as a standing capsule even seen from straight above.
+  _pd.copy(_pa).normalize();
+  const up = _pd.clone();
+  _pd.multiplyScalar(0.62).addScaledVector(_camUp, 0.5).normalize();
+  pin.quaternion.setFromUnitVectors(UP, _pd);
+  pin.position.copy(_pa).addScaledVector(up, lift);
+  pin.scale.setScalar(zs);
+}
+function updateRings(now) {
+  const show = navOn && nextL && !RM ? 1 : navOn && nextL ? 0.6 : 0;
+  rings.forEach((m, i) => {
+    if (!show || !nextL) { m.visible = false; return; }
+    const ph = ((now / 1700) + i * 0.5) % 1;
+    const zs = zsNow * 1.45;
+    const s = RM ? 0.028 * zs : (0.018 + 0.024 * easeOut(ph)) * zs;
+    m.visible = true;
+    m.material.color.set(STATE_COL[nextL.shown] || STATE_COL.ready);
+    m.material.opacity = RM ? 0.5 : 0.75 * (1 - ph) * show;
+    m.quaternion.copy(nextL.q); m.position.copy(nextL.dir).multiplyScalar(FZ + 0.0008);
+    m.scale.setScalar(s);
+  });
+  if (burstAt >= 0 && youL) {
+    const t = (now - burstAt) / 800;
+    if (t >= 1 || RM) { burst.visible = false; burstAt = -1; }
+    else {
+      burst.visible = true; burst.quaternion.copy(youL.q); burst.position.copy(youL.dir).multiplyScalar(FZ + 0.001);
+      burst.scale.setScalar((0.02 + 0.05 * easeOut(t)) * zsNow); burst.material.opacity = 0.8 * (1 - t);
+    }
+  }
+}
+
+// ════════════════════════ Overlay: Next callout, labels, tooltip, crumbs ════════════════════════
+const callout = { mode: 'off', x: 0, y: 0, w: 0, h: 36, text: '', shown: false, rect: null, ang: 0, pick: -1 };
+function updateCallout(dt, now) {
+  if (navOn && now >= nextHold) {
+    const n = recommend();
+    if (n !== nextL) nextL = n;
+  }
+  const show = navOn && nextL && !card.lesson && !(pinAnim && pinAnim.drop && now - pinAnim.t0 < 300);
+  if (!show) {
+    if (callout.shown) { nextEl.classList.remove('show'); callout.shown = false; stemEl.style.opacity = 0; }
+    callout.rect = null; callout.mode = 'off';
+    return;
+  }
+  const label = 'Next: ' + nextL.lesson.label;
+  if (label !== callout.text) {
+    callout.text = label; nextText.textContent = label;
+    nextEl.dataset.state = nextL.lesson.progress > 0 ? 'progress' : 'ready';
+    nextEl.setAttribute('aria-label', `${label}. ${graph.statusText(nextL.lesson)}`);
+    callout.w = nextEl.offsetWidth; callout.h = nextEl.offsetHeight;
+  }
+  const s = nextL.scr, w = callout.w, h = callout.h;
+  let tx, ty, mode, ang = 0;
+  if (s.facing > 0.18 && s.x > 24 && s.x < W - 24 && s.y > 24 && s.y < H - 24) {
+    mode = 'front';
+    const ax = s.x, top = Math.min(s.ty, s.y) - 6, bot = s.y + s.r + 6, g = 14;
+    const cx0 = clamp(ax - w / 2, 8, W - w - 8); // above/below slide sideways to stay on screen
+    const cands = [[cx0, top - g - h], [cx0, bot + g], [ax + s.r + g, s.y - h / 2], [ax - s.r - g - w, s.y - h / 2], [cx0, top - g * 3 - h], [cx0, bot + g * 3]];
+    let pick = null, bestS = Infinity;
+    cands.forEach(([x, y], ci) => {
+      if (!fits(x, y, w, h)) return;
+      let sc = ci * 0.6 + (ci === callout.pick ? -2 : 0);
+      for (const L of LMS) if (L !== nextL && L.scr.vis && L.scr.x > x - 4 && L.scr.x < x + w + 4 && L.scr.ty < y + h + 2 && L.scr.y > y - 2) sc += 3;
+      if (youL && youL.scr.vis && youL.scr.x > x - 6 && youL.scr.x < x + w + 6 && youL.scr.ty - 30 < y + h && youL.scr.y > y) sc += 4;
+      if (sc < bestS) { bestS = sc; pick = [x, y]; callout.pick = ci; }
+    });
+    if (!pick) pick = [clamp(cands[0][0], 8, W - w - 8), clamp(cands[0][1], 8, H - h - 8)];
+    [tx, ty] = pick;
+  } else {
+    // Around the bend (or off-screen while zoomed in): sit just beyond the planet's edge, pointing that way.
+    mode = 'edge';
+    let dx = s.x - center.x, dy = s.y - center.y;
+    if (s.facing <= 0.18) { _v.copy(nextL.dir).applyQuaternion(planet.quaternion); dx = _v.x; dy = -_v.y; if (Math.hypot(dx, dy) < 0.05) { dx = 1; dy = 0; } }
+    const len = Math.hypot(dx, dy) || 1; dx /= len; dy /= len;
+    ang = Math.atan2(dy, dx);
+    const rr = Math.min(limbPx + 22, Math.hypot(W, H));
+    let cx = center.x + dx * (rr + w / 2 * Math.abs(dx)), cy = center.y + dy * (rr + h / 2 * Math.abs(dy));
+    tx = cx - w / 2; ty = cy - h / 2;
+    tx = clamp(tx, 12, W - w - 12); ty = clamp(ty, 12, H - h - 12);
+    for (let it = 0; it < 6 && !fits(tx, ty, w, h); it++) {
+      const r = safe.list.find((q) => overlaps(tx, ty, w, h, q));
+      if (!r) break;
+      // Step out of the UI box toward the planet's centre.
+      const vx = center.x - (tx + w / 2), vy = center.y - (ty + h / 2), vl = Math.hypot(vx, vy) || 1;
+      tx += (vx / vl) * 24; ty += (vy / vl) * 24;
+    }
+    tx = clamp(tx, 8, W - w - 8); ty = clamp(ty, 8, H - h - 8);
+  }
+  if (!callout.shown || mode !== callout.mode && RM) { callout.x = tx; callout.y = ty; }
+  else { const r = mode === callout.mode ? 22 : 10; callout.x = damp(callout.x, tx, r, dt); callout.y = damp(callout.y, ty, r, dt); }
+  callout.mode = mode;
+  nextEl.style.transform = `translate3d(${callout.x.toFixed(1)}px, ${callout.y.toFixed(1)}px, 0)`;
+  if (nextEl.classList.contains('edge') !== (mode === 'edge')) {
+    nextEl.classList.toggle('edge', mode === 'edge'); callout.w = nextEl.offsetWidth;
+    nextEl.setAttribute('aria-label', mode === 'edge' ? `${callout.text}. Spin the planet to it.` : `${callout.text}. ${graph.statusText(nextL.lesson)}`);
+  }
+  nextEl.classList.toggle('flip', mode === 'edge' && Math.cos(ang) < 0);
+  if (!callout.shown) { nextEl.classList.add('show'); callout.shown = true; }
+  callout.rect = [callout.x - 6, callout.y - 6, callout.x + w + 6, callout.y + h + 6];
+  // Stem: a short line from the landmark to the nearest edge of the pill.
+  if (mode === 'front') {
+    const x = callout.x, y = callout.y, cx = x + w / 2, cy = y + h / 2;
+    let x1 = s.x, y1 = s.ty - 2, x2, y2;
+    if (y + h <= s.ty) { x2 = clamp(s.x, x + 16, x + w - 16); y2 = y + h; }
+    else if (y >= s.y) { x2 = clamp(s.x, x + 16, x + w - 16); y2 = y; y1 = s.y + s.r * 0.5; }
+    else { x2 = cx > s.x ? x : x + w; y2 = cy; x1 = s.x + Math.sign(cx - s.x) * s.r * 0.7; y1 = s.y - s.r * 0.2; }
+    stemEl.setAttribute('x1', x1.toFixed(1)); stemEl.setAttribute('y1', y1.toFixed(1));
+    stemEl.setAttribute('x2', x2.toFixed(1)); stemEl.setAttribute('y2', y2.toFixed(1));
+    stemEl.style.opacity = Math.hypot(x2 - x1, y2 - y1) > 6 ? 0.5 : 0;
+  } else stemEl.style.opacity = 0;
+}
+
+// Continent label on hover.
+let contShown = null;
+function updateContLabel() {
+  const K = hover && hover.kind === 'cont' ? hover.K : null;
+  for (const C of conts) C.hiT = C === K ? 1 : 0;
+  if (!K) { if (contShown) { contLbl.classList.remove('show'); contShown = null; } return null; }
+  if (contShown !== K) {
+    contShown = K;
+    contLbl.querySelector('i').style.background = K.hue;
+    contLbl.querySelector('span').textContent = K.dom.label;
+    contLbl.querySelector('em').textContent = pct(K.dom.m);
+    K._lw = contLbl.offsetWidth; K._lh = contLbl.offsetHeight;
+  }
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const L of K.landmarks) if (L.scr.facing > 0.05 && L.scr.z < 1) { x0 = Math.min(x0, L.scr.x); x1 = Math.max(x1, L.scr.x); y0 = Math.min(y0, L.scr.ty); y1 = Math.max(y1, L.scr.y); }
+  if (x0 === Infinity) { x0 = x1 = pointer.x; y0 = y1 = pointer.y; }
+  const w = K._lw, h = K._lh, cx = clamp((x0 + x1) / 2, Math.min(x0, x1), Math.max(x0, x1));
+  const extra = callout.rect ? [callout.rect] : null;
+  const cx1 = (x) => clamp(x, 8, W - w - 8);
+  const cands = [[cx1(cx - w / 2), y0 - 18 - h], [cx1(cx - w / 2), y1 + 18], [cx1(pointer.x - w / 2), pointer.y - 32 - h], [cx1(pointer.x - w / 2), pointer.y + 32], [cx1(pointer.x - w / 2), pointer.y - 80 - h], [cx1(pointer.x - w / 2), pointer.y + 80]];
+  const p = cands.find(([x, y]) => fits(x, y, w, h, extra));
+  if (!p) { contLbl.classList.remove('show'); return null; } // nowhere clean to put it: the highlight alone carries the hover
+  contLbl.style.transform = `translate3d(${p[0].toFixed(1)}px, ${p[1].toFixed(1)}px, 0)`;
+  contLbl.classList.add('show');
+  return [p[0], p[1], p[0] + w, p[1] + h];
+}
+
+// Topic labels when you are close to a continent.
+const topicEls = [];
+function topicEl(i) {
+  while (topicEls.length <= i) { const d = document.createElement('div'); d.className = 'lbl topic-lbl'; topicLayer.append(d); topicEls.push({ el: d, text: '', x: 0, y: 0, shown: false, pick: -1 }); }
+  return topicEls[i];
+}
+function updateTopicLabels(dt, reserved) {
+  const on = navOn && rig.alt <= lessonAlt * 1.05;
+  let used = 0;
+  if (on) {
+    const K = conts[frontCont];
+    const placed = reserved.slice();
+    for (const T of K.topics) {
+      const vis = T.L.filter((L) => L.scr.vis);
+      if (vis.length < Math.min(2, T.L.length)) continue;
+      let ax = 0, ay = 0; for (const L of vis) { ax += L.scr.x; ay += L.scr.y; } ax /= vis.length; ay /= vis.length;
+      const E = topicEl(used);
+      const locked = !T.t.unlocked;
+      if (E.text !== T.t.label) { E.text = T.t.label; E.el.textContent = T.t.label; E.w = E.el.offsetWidth || 120; E.h = E.el.offsetHeight || 26; }
+      E.el.classList.toggle('locked', locked);
+      const w = E.w, h = E.h;
+      const cands = [[ax - w / 2, ay - h / 2], [ax - w / 2, ay - 44 - h / 2], [ax - w / 2, ay + 44 - h / 2], [ax + 40, ay - h / 2], [ax - 40 - w, ay - h / 2], [ax + 24, ay - 40 - h / 2], [ax - 24 - w, ay - 40 - h / 2], [ax + 24, ay + 40 - h / 2], [ax - 24 - w, ay + 40 - h / 2], [ax - w / 2, ay - 80], [ax - w / 2, ay + 64]];
+      let bestI = -1, bestS = Infinity;
+      cands.forEach(([x, y], ci) => {
+        if (!fits(x, y, w, h, placed)) return;
+        let sc = Math.hypot(x + w / 2 - ax, y + h / 2 - ay) * 0.02;
+        for (const L of LMS) if (L.scr.vis && L.scr.x > x - L.scr.r && L.scr.x < x + w + L.scr.r && L.scr.ty < y + h + 4 && L.scr.y + L.scr.r > y - 4) sc += L === nextL || L === youL ? 60 : 25;
+        if (ci === E.pick) sc -= 1.5;
+        if (sc < bestS) { bestS = sc; bestI = ci; }
+      });
+      if (bestI < 0) continue;
+      const [x, y] = cands[bestI];
+      if (!E.shown || E.pick < 0) { E.x = x; E.y = y; } else { E.x = damp(E.x, x, 20, dt); E.y = damp(E.y, y, 20, dt); }
+      E.pick = bestI;
+      E.el.style.transform = `translate3d(${E.x.toFixed(1)}px, ${E.y.toFixed(1)}px, 0)`;
+      if (!E.shown) { E.el.classList.add('show'); E.shown = true; }
+      placed.push([x - 4, y - 4, x + w + 4, y + h + 4]);
+      used++;
+    }
+  }
+  for (let i = used; i < topicEls.length; i++) { const E = topicEls[i]; if (E.shown) { E.el.classList.remove('show'); E.shown = false; E.pick = -1; } }
+}
+
+// Lesson tooltip.
+let tipFor = null;
+function tipLine(l) {
+  if (l.state === 'mastered') return ['Mastered', STATE_COL.mastered];
+  if (l.state === 'frontier') return l.progress > 0 ? [`In progress · ${pct(l.progress)}`, STATE_COL.progress] : ['Ready to learn', STATE_COL.ready];
+  return [graph.blockerText(l), STATE_COL.locked];
+}
+function updateTip() {
+  const L = hover && hover.kind === 'lesson' ? hover.L : null;
+  if (L !== tipFor || (L && L._tipState !== L.lesson.state + L.lesson.progress)) {
+    tipFor = L;
+    if (L) {
+      L._tipState = L.lesson.state + L.lesson.progress;
+      const [text, c] = tipLine(L.lesson);
+      tipEl.replaceChildren();
+      const b = document.createElement('b'); b.textContent = L.lesson.label;
+      const st = document.createElement('span'); st.className = 'st';
+      const dot = document.createElement('i'); dot.style.background = c; st.append(dot, text);
+      tipEl.append(b, st);
+      if (L.lesson.state === 'frontier') { const a = document.createElement('span'); a.className = 'act'; a.textContent = (touchFirst ? 'Tap to ' : 'Click to ') + (L.lesson.progress > 0 ? 'continue' : 'start'); tipEl.append(a); }
+      tipEl._w = tipEl.offsetWidth; tipEl._h = tipEl.offsetHeight;
+    }
+    tipEl.classList.toggle('show', !!L);
+  }
+  if (!L) return null;
+  const ax = L.scr.x, ay = L.scr.y, w = tipEl._w, h = tipEl._h, g = 18 + L.scr.r;
+  const extra = callout.rect ? [callout.rect] : null;
+  const cands = [[ax + g, ay - h / 2], [ax - g - w, ay - h / 2], [ax - w / 2, L.scr.ty - 14 - h], [ax - w / 2, ay + g]];
+  const p = cands.find(([x, y]) => fits(x, y, w, h, extra)) || [clamp(cands[0][0], 8, W - w - 8), clamp(cands[0][1], 8, H - h - 8)];
+  tipEl.style.transform = `translate3d(${p[0].toFixed(1)}px, ${p[1].toFixed(1)}px, 0)`;
+  return [p[0], p[1], p[0] + w, p[1] + h];
+}
+
+// Crumbs (only while close to a continent).
+let crumbFor = -2;
+function renderCrumbs(force) {
+  const on = navOn && rig.alt <= lessonAlt * 1.05;
+  const key = on ? frontCont : -1;
+  if (key === crumbFor && !force) return;
+  crumbFor = key;
+  crumbsEl.hidden = !on;
+  if (on) {
+    const K = conts[frontCont];
+    crumbCur.querySelector('i').style.background = K.hue;
+    crumbCur.querySelector('span').textContent = K.dom.label;
+    crumbCur.querySelector('em').textContent = pct(K.dom.m);
+  }
+  safe.at = 0;
+}
+
+// ════════════════════════ Ambient motion: inertia, edge lean, music ════════════════════════
+let leanK = 0;
+function updateMotion(now, dt) {
+  if (flight || dragging || !navOn) { leanK = 0; return; }
+  const onTarget = hover && (hover.kind === 'lesson' || hover.kind === 'next');
+  // Inertia (and nothing slides away while you are on a target).
+  if (Math.abs(rig.vYaw) > 1e-4 || Math.abs(rig.vPitch) > 1e-4) {
+    rig.yawT += rig.vYaw * dt; rig.pitchT = clamp(rig.pitchT + rig.vPitch * dt, -PMAX, PMAX);
+    const decay = onTarget ? 14 : 2.4;
+    rig.vYaw *= Math.exp(-decay * dt); rig.vPitch *= Math.exp(-decay * dt);
+    if (Math.abs(rig.pitchT) >= PMAX) rig.vPitch = 0;
+  }
+  // Edge lean: rest the pointer near the planet's edge and it turns gently that way.
+  let want = 0, lx = 0, ly = 0;
+  if (!RM && pointer.in && !card.lesson && !onTarget && now - pointer.movedAt < 2600 && !touchFirst) {
+    const rx = Math.min(limbPx, W / 2 - 16), ry = Math.min(limbPx, H / 2 - 16);
+    const nx = (pointer.x - center.x) / rx, ny = (pointer.y - (rig.alt > lessonAlt ? center.y : H / 2)) / ry;
+    const r = Math.hypot(nx, ny);
+    if (r > 0.74 && r < 1.3) { want = smoothstep(0.74, 1.0, r) * (1 - smoothstep(1.12, 1.3, r)); lx = nx / r; ly = ny / r; }
+    for (const q of safe.list) if (pointer.x > q[0] && pointer.x < q[2] && pointer.y > q[1] && pointer.y < q[3]) want = 0;
+  }
+  leanK = damp(leanK, want, want > leanK ? 2.2 : 6, dt);
+  if (leanK > 0.01) {
+    const sp = 0.24 * leanK * clamp(380 / ppr, 0.15, 1.2); // ≈ 90 px/s of surface at any zoom
+    rig.yawT -= lx * sp * dt;
+    rig.pitchT = clamp(rig.pitchT - ly * sp * dt * 0.8, -PMAX, PMAX);
+  }
+  // Springs.
+  rig.yaw = damp(rig.yaw, rig.yawT, 16, dt); rig.pitch = damp(rig.pitch, rig.pitchT, 16, dt);
+  rig.alt = Math.exp(damp(Math.log(rig.alt), Math.log(rig.altT), 11, dt));
+}
+let musicAt = 0;
+function updateMusic(now, dt) {
+  boost = Math.max(0, boost - dt * 0.07);
+  if (!intro.done || now < musicAt) return;
+  musicAt = now + 500;
+  const close = 1 - smoothstep(lessonAlt * 0.7, fitAlt, rig.alt);
+  score.setIntensity(clamp(0.24 + 0.2 * graph.root.m + 0.16 * close + (card.lesson ? 0.1 : 0) + boost, 0, 1), 2.5);
+}
+
+// ════════════════════════ Resize ════════════════════════
+function resize() {
+  W = innerWidth; H = innerHeight; DPR = Math.min(devicePixelRatio || 1, 2);
+  renderer.setPixelRatio(DPR); renderer.setSize(W, H, false);
+  camera.aspect = W / H; camera.updateProjectionMatrix();
+  const k = computeFit();
+  if (Number.isFinite(k) && k > 0 && navOn) { rig.alt = clamp(rig.alt * k, minAlt, maxAlt); rig.altT = clamp(rig.altT * k, minAlt, maxAlt); }
+  safe.at = 0;
+}
+addEventListener('resize', resize);
+
+// ════════════════════════ QA hooks & loop ════════════════════════
+const demo = params.get('demo');
+computeFit();
+computeSettle();
+rig.yaw = rig.yawT = settle.yaw - (RM ? 0 : 3.9); rig.pitch = rig.pitchT = settle.pitch; rig.alt = rig.altT = fitAlt * (RM ? 1 : 9);
+intro.offset = params.has('t') ? parseFloat(params.get('t')) || 0 : demo ? 99 : 0;
+if (intro.offset >= T_IMPACT) { rig.yaw = rig.yawT = settle.yaw; rig.pitch = rig.pitchT = settle.pitch; rig.alt = rig.altT = fitAlt; for (const L of litSeq) { L.lit = true; setShown(L, L.v, -1e9, false); } ROAD.uLit.value = litTotal; }
+const findLesson = (s) => LMS.find((L) => L.lesson.label.toLowerCase() === String(s).toLowerCase());
+const findCont = (s) => conts.find((K) => K.dom.label.toLowerCase().startsWith(String(s).toLowerCase()));
+let demoRan = false;
+function runDemo() {
+  if (params.has('px') && params.has('py')) { pointer.x = +params.get('px'); pointer.y = +params.get('py'); pointer.in = true; pointer.movedAt = performance.now(); }
+  if (!demo) return;
+  const target = params.get('lesson') ? findLesson(params.get('lesson')) : nextL;
+  if (demo === 'continent') { const K = params.get('c') ? findCont(params.get('c')) : nextL.K; const [yaw, pitch] = yawPitchFor(K.c); Object.assign(rig, { yaw, yawT: yaw, pitch, pitchT: pitch, alt: K.contAlt, altT: K.contAlt }); }
+  if (demo === 'far') { const [yaw, pitch] = yawPitchFor(nextL.dir); Object.assign(rig, { yaw: yaw + Math.PI, yawT: yaw + Math.PI, pitch: -pitch * 0.5, pitchT: -pitch * 0.5 }); }
+  if (demo === 'hover') {
+    const K = params.get('c') ? findCont(params.get('c')) : nextL.K;
+    const [yaw, pitch] = yawPitchFor(K.c);
+    if (params.get('target') === 'lesson') {
+      Object.assign(rig, { yaw, yawT: yaw, pitch, pitchT: pitch, alt: K.contAlt, altT: K.contAlt });
+      demoHoverLesson = target && target.K === K ? target : K.landmarks.find((L) => L.lesson.state === 'frontier') || K.landmarks[0];
+    } else demoHoverCont = K;
+  }
+  if (demo === 'next' || demo === 'card' || demo === 'complete') {
+    if (target) card.open(target.lesson);
+    if (demo === 'complete') setTimeout(() => card.el.querySelector('.actions .kg-btn.primary')?.click(), 900);
+  }
+}
+let demoHoverLesson = null, demoHoverCont = null;
+function demoPointer() {
+  // Park a simulated pointer on the demo target once its screen position is known.
+  if (demoHoverLesson) { pointer.x = demoHoverLesson.scr.x + 6; pointer.y = demoHoverLesson.scr.y + 4; pointer.in = true; pointer.movedAt = performance.now(); demoHoverLesson = null; }
+  if (demoHoverCont) {
+    const K = demoHoverCont; demoHoverCont = null;
+    // A land point on the continent away from the Next landmark.
+    let best = null, bd = -1;
+    for (const s of K.dense) {
+      const w = s.d.clone().multiplyScalar(FZ).applyMatrix4(planet.matrixWorld); const p = toScreen(w, { x: 0, y: 0, z: 0 });
+      const dn = nextL ? Math.hypot(p.x - nextL.scr.x, p.y - nextL.scr.y) : 999;
+      let dl = 999; for (const L of K.landmarks) dl = Math.min(dl, Math.hypot(p.x - L.scr.x, p.y - L.scr.y));
+      const sc = Math.min(dn, 120) + dl * 0.2 - Math.hypot(p.x - center.x, p.y - center.y) * 0.3;
+      if (dl > 8 && sc > bd) { bd = sc; best = p; }
+    }
+    if (best) { pointer.x = best.x; pointer.y = best.y; pointer.in = true; pointer.movedAt = performance.now() - 5000; }
+  }
+}
+
+const perf = { n: 0, upd: 0, ren: 0, max: 0, gaps: [] };
+let last = performance.now(), paused = false;
+function tick(now) {
+  now = Math.max(now, last);
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  const t0 = performance.now();
+  safeRects(now);
+  introUpdate(now);
+  if (intro.done && !demoRan) { demoRan = true; runDemo(); }
+  stepFlight(now);
+  updateMotion(now, dt);
+  applyRig();
+  measure();
+  zsNow = zoomScale();
+  updateRoad(now);
+  updateLandmarks(now, dt);
+  updatePin(now);
+  updateRings(now);
+  // Front continent (for crumbs, topic labels and the spin tick).
+  _qi.copy(planet.quaternion).invert();
+  const F = new THREE.Vector3(0, 0, 1).applyQuaternion(_qi);
+  let bc = 0, bd = -2; for (const K of conts) { const d = K.c.dot(F); if (d > bd) { bd = d; bc = K.ci; } }
+  if (bc !== frontCont) { if (navOn && (dragging || flight || Math.abs(rig.vYaw) > 0.3)) score.sfx('step'); frontCont = bc; }
+  renderCrumbs(false);
+  demoPointer();
+  setHover(computeHover());
+  for (const K of conts) { K.hi = damp(K.hi, K.hiT || 0, 14, dt); HI.value[K.ci] = K.hi * 0.9; }
+  const cr = updateContLabel();
+  updateCallout(dt, now);
+  const tr = updateTip();
+  const reserved = [callout.rect, cr, tr].filter(Boolean);
+  updateTopicLabels(dt, reserved);
+  // Clouds.
+  drawCover(now);
+  if (!RM) orbit.rotation.y += dt * 0.025;
+  drawOrbit(smoothstep(lessonAlt * 0.9, fitAlt * 0.8, rig.alt));
+  updateMusic(now, dt);
+  const t1 = performance.now();
+  renderer.render(scene, camera);
+  const t2 = performance.now();
+  perf.n++; perf.upd += t1 - t0; perf.ren += t2 - t1; perf.max = Math.max(perf.max, t2 - t0);
+}
+let prevFrame = 0;
+function frame() {
+  const fnow = performance.now();
+  if (prevFrame) { const d = fnow - prevFrame; perf.gaps.push(d); if (perf.gaps.length > 600) perf.gaps.shift(); }
+  prevFrame = fnow;
+  if (!paused) tick(fnow);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+setInterval(() => { const now = performance.now(); if (!paused && !document.hidden && now - last > 120) tick(now); }, 16);
+
+window.__planet = {
+  graph, conts, LMS, rig, card, camera, renderer,
+  get next() { return nextL && nextL.lesson.label; },
+  get you() { return youL && youL.lesson.label; },
+  get hover() { return hover && (hover.L ? hover.L.lesson.label : hover.K ? hover.K.dom.label : hover.kind); },
+  get callout() { return { mode: callout.mode, x: callout.x, y: callout.y, w: callout.w, h: callout.h }; },
+  get navOn() { return navOn; }, get frontCont() { return conts[frontCont].dom.label; },
+  get fit() { return { fitAlt, lessonAlt, minAlt, maxAlt, ppr, limbPx, center }; },
+  errors,
+  nextScreen: () => nextL && [nextL.scr.x, nextL.scr.y],
+  lessonScreen: (s) => { const L = findLesson(s); return L && [L.scr.x, L.scr.y, L.scr.vis]; },
+  contScreen: (s) => { const K = findCont(s); const p = toScreen(K.c.clone().multiplyScalar(FZ).applyMatrix4(planet.matrixWorld), { x: 0, y: 0, z: 0 }); return [p.x, p.y]; },
+  pause(v) { paused = v; last = performance.now(); },
+  perf() {
+    const g = perf.gaps.slice().sort((a, b) => a - b), q = (p) => +(g[Math.min(g.length - 1, Math.floor(p * g.length))] || 0).toFixed(1);
+    const r = { frames: perf.n, updMs: +(perf.upd / Math.max(1, perf.n)).toFixed(2), renMs: +(perf.ren / Math.max(1, perf.n)).toFixed(2), maxMs: +perf.max.toFixed(1), frameGapP50: q(0.5), frameGapP95: q(0.95), calls: renderer.info.render.calls, tris: renderer.info.render.triangles };
+    Object.assign(perf, { n: 0, upd: 0, ren: 0, max: 0, gaps: [] }); return r;
+  },
+};
+</script>
+</body>
+</html>

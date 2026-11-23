@@ -1,0 +1,1267 @@
+<!doctype html>
+<!--
+  Sound design: Origin Story, underwater (a submarine rising from the abyss to the surface, dolphins alongside)
+
+  Music: hybrid trailer score in D minor that starts muffled and deep, then opens up as the sub climbs.
+  Day 1 is a lone heartbeat under a sub-bass drone with heavy low-pass ("pressure" in the deep). Pulsing low
+  strings join and quicken under the montage as the water brightens. Taiko + toms drive the chapter cuts
+  (~120 bpm, one bar per chapter), with whale-like low swells (slow, pitched-down brass/cello glides) between hits.
+  It thins to a single held drone for the struggle, builds with rising strings/brass as the sub ascends, and
+  breaks into a big, bright surfacing swell (full orchestra + air) on the score reveal. Under "your move" it's
+  a warm, sunlit pulse, open and bright, just below the surface.
+  setIntensity: 0 Day 1 → 0.25–0.85 montage → 0.81 chapters → 0.05 struggle → 0.3–1 build → 0.6 goal →
+  0.45 while choosing (0.9 for ~3s after a lesson is completed).
+
+  Events (score.sfx), each fired on its visual beat:
+    whoosh   scene cut: a soft underwater swish, a filtered water rush, ~0.4s.
+    intro    title hit as a big word lands ("Day 1.", "48", "1500"): deep boom + muffled brass stab, ~1s.
+    sonar    sonar ping as a lesson reading lands (ring leaves the sub): clean pitched ping with a long
+             watery tail, ~1.2s. Fired at most every ~0.5s.
+    step     one beat tick: each montage cut, each chapter bar landing, each final card landing.
+             Soft, tight, slightly bubbly tick, ~80ms (can fire ~20×/s at the end of the montage).
+    riser    into the score reveal: 2.2s rising swell with bubbles streaming upward, ending on the hit.
+    impact   the score reveal: the big surfacing swell, a sub drop into a bright orchestral bloom with an
+             air/splash crest, 2–3s tail.
+    hover    pointer enters a lesson card: a very soft, small bubble "blip".
+    select   lesson card opens / "See all" expands: two soft rising bubble clicks.
+    back     lesson card closes / list collapses: the same, falling.
+    start    "Start lesson" pressed: short upward bubble swell, ~0.9s (fired by the shared lesson card).
+    complete lesson mastered: bright rising mallet/bell arpeggio + a splash of bubbles (shared lesson card).
+    unlock   the next lesson card appears in its column: airy shimmer with a dolphin-like chirp.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Origin Story</title>
+<link rel="stylesheet" href="../shared/dolphin.css">
+<style>
+  /* Type scale: XL numerals, L titles, M headlines, S card titles, body. Spacing: 8px rhythm. */
+  :root {
+    --bg: #02091A; --lb: 0px; --hue: #2F9AE6; --ink-2: #31527A;
+    --t-xl: clamp(104px, 20vw, 280px);
+    --t-l: clamp(40px, 7vw, 112px);
+    --t-m: clamp(26px, 3.6vw, 52px);
+    --t-s: clamp(18px, 1.35vw, 24px);
+    --t-body: clamp(15px, 1.05vw, 20px);
+  }
+  html, body { background: var(--bg); color: var(--foam); overflow: hidden; }
+  [hidden] { display: none !important; }
+  body { position: fixed; inset: 0; }
+
+  /* ── Layers: ocean canvas, type, letterbox, flash ── */
+  #world { position: fixed; inset: 0; will-change: transform; }
+  #fx { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  #stage { position: absolute; inset: 0; pointer-events: none; overflow: hidden; overflow: clip; }
+  .scene { position: absolute; inset: 0; transition: color 500ms ease; }
+  .lb { position: fixed; left: 0; right: 0; height: var(--lb); background: #01050D; z-index: 8; pointer-events: none; }
+  .lb.top { top: 0; }
+  .lb.bot { bottom: 0; }
+  #flash { position: fixed; inset: 0; z-index: 7; pointer-events: none; background: #DFF4FF; opacity: 0; }
+
+  /* ── Type ── */
+  .stack { position: absolute; left: 0; right: 0; top: var(--lb); bottom: var(--lb); display: flex; flex-direction: column;
+    align-items: center; justify-content: center; text-align: center; padding: 0 24px; gap: 16px; }
+  .w { display: inline-block; white-space: nowrap; }
+  .ch { display: inline-block; }
+  .t-body { font: 700 var(--t-body)/1.4 var(--font-body); color: rgba(255, 255, 252, 0.78); }
+  .t-m { font-family: var(--font-head); font-size: var(--t-m); line-height: 1.08; }
+  .t-l { font-family: var(--font-head); font-size: var(--t-l); line-height: 1.02; letter-spacing: -0.01em; max-width: min(92vw, 1400px); }
+  .t-xl { font-family: var(--font-head); font-size: var(--t-xl); line-height: 0.9; letter-spacing: -0.02em; }
+  .dg { display: inline-block; width: 0.6em; text-align: center; }
+  .sun { color: var(--sun); }
+
+  /* 1 · Day 1 */
+  .k-day { color: var(--sun); }
+  .slot { display: block; }
+
+  /* 2 · Montage: one lesson reading at a time, hard cuts */
+  .mhud { position: absolute; left: clamp(24px, 4vw, 64px); top: calc(var(--lb) + 24px); display: flex; align-items: baseline; gap: 8px; }
+  .mnum { color: var(--sun); transform-origin: left bottom; }
+  .cut { position: absolute; left: 0; right: 0; top: var(--lb); bottom: var(--lb); display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 0 24px; text-align: center; }
+  .cut .t-l::after { content: ''; display: block; height: 4px; width: 64px; margin: 24px auto 0; border-radius: 4px; background: var(--hue); }
+
+  /* 3 + 4 · Chapters */
+  .barrow { display: flex; align-items: center; gap: 16px; width: min(640px, 84vw); margin-top: 8px; }
+  .cbar { position: relative; flex: 1; height: 8px; border-radius: 8px; background: rgba(217, 228, 242, 0.14); }
+  .cfill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: inherit; background: var(--hue); }
+  .cpct { min-width: 3.2ch; text-align: right; }
+  .struggle .t-l, .struggle .cpct { color: var(--cloud); }
+  .struggle .cbar { background: transparent; box-shadow: inset 0 0 0 1.5px rgba(183, 192, 204, 0.3); }
+  .k-line .w:last-child { transition: color 600ms ease; }
+  .k-line.lit .w:last-child { color: var(--sun); }
+  .os-ghost { position: absolute; width: 0; display: flex; justify-content: center; white-space: nowrap; font-family: var(--font-head); color: var(--cloud); opacity: 0; }
+
+  /* 5 · Reveal */
+  .num.lit { color: var(--sun); }
+
+  /* 6 · Your move: just below the surface, so type turns to ink on sunlit water */
+  .scene.lw { color: var(--ink); }
+  .scene.lw .t-body { color: var(--ink-2); }
+  .scene.lw .sun { color: var(--ink); }
+  .tlayout { position: absolute; inset: 0; display: flex; flex-direction: column; padding: 48px clamp(16px, 4vw, 64px) 112px; gap: 32px;
+    transition: transform 320ms cubic-bezier(.2, .8, .2, 1); }
+  .thud { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px 32px; flex-wrap: wrap; opacity: 0; }
+  .thud h2 { font-family: var(--font-head); font-weight: normal; font-size: var(--t-m); line-height: 1.04; margin: 0; }
+  .tm { width: min(256px, 100%); position: relative; }
+  .tmrow { display: flex; align-items: baseline; gap: 8px; font-family: var(--font-head); font-size: var(--t-s); line-height: 1; color: var(--ink-2); }
+  .tmrow .tsc { color: var(--ink); }
+  .tmrow .arr { font: 700 0.8em/1 var(--font-body); opacity: 0.6; }
+  .tbar { position: relative; height: 6px; border-radius: 6px; background: rgba(10, 35, 79, 0.16); margin-top: 8px; }
+  .tbar i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: inherit; background: var(--ink); transition: width 900ms cubic-bezier(.2, .8, .2, 1); }
+  .tplus { position: absolute; right: 0; top: -24px; font-family: var(--font-head); font-size: var(--t-s); color: var(--ink); opacity: 0; pointer-events: none; }
+  .tplus.go { animation: plus 1400ms cubic-bezier(.2, .8, .2, 1) forwards; }
+  @keyframes plus { 0% { opacity: 0; transform: translateY(8px); } 15% { opacity: 1; transform: none; } 70% { opacity: 1; } 100% { opacity: 0; transform: translateY(-8px); } }
+
+  .gridwrap { flex: 0 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-width: none; pointer-events: auto; padding: 8px; margin: -8px; }
+  .gridwrap::-webkit-scrollbar { display: none; }
+  .gridwrap.scrolls { -webkit-mask-image: linear-gradient(#000 calc(100% - 32px), transparent); mask-image: linear-gradient(#000 calc(100% - 32px), transparent); padding-bottom: 32px; }
+  .grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 16px; align-items: start; }
+  .col { display: flex; flex-direction: column; min-width: 0; }
+
+  .rec { position: relative; display: flex; flex-direction: column; width: 100%; min-height: 152px; text-align: left; cursor: pointer; font: inherit;
+    color: var(--ink); padding: 24px 16px 16px; border-radius: 16px; border: 1.5px solid rgba(10, 35, 79, 0.06); background: rgba(255, 255, 252, 0.94);
+    box-shadow: 0 2px 0 rgba(10, 35, 79, 0.1); opacity: 0;
+    transition: transform 120ms ease-out, border-color 120ms ease-out, box-shadow 120ms ease-out; }
+  .rec.landed { opacity: 1; }
+  .rec:not(.landed) { pointer-events: none; }
+  .rec::before { content: ''; position: absolute; left: 16px; top: 0; width: 40px; height: 4px; border-radius: 0 0 4px 4px; background: var(--hue); }
+  .rec .dn { font: 700 13px/16px var(--font-body); color: var(--ink-2); opacity: 0; transition: opacity 120ms ease-out; }
+  .rec .fn { font-family: var(--font-head); font-size: var(--t-s); line-height: 1.18; margin: 8px 0 auto; padding-bottom: 16px; }
+  .rec .go { display: flex; align-items: center; gap: 8px; font: 800 var(--t-body)/1 var(--font-body); color: var(--ink); white-space: nowrap; }
+  .rec .go::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--hue); flex: none; }
+  .rec.done .go::before { display: none; }
+  .rec.landed:hover, .rec.landed:focus-visible, .rec.sel { transform: translateY(-4px); border-color: var(--hue); outline: none; box-shadow: 0 12px 24px -12px rgba(10, 35, 79, 0.5); }
+  .rec:hover .dn, .rec:focus-visible .dn, .rec.sel .dn, .grid.all .rec .dn { opacity: 1; }
+  .rec.done { border-color: var(--sun-shadow); }
+  .rec.done .go { color: var(--success); }
+  .rec.won-anim { animation: wonpop 600ms cubic-bezier(.2, .8, .2, 1.2); }
+  @keyframes wonpop { 35% { transform: translateY(-4px) scale(1.04); } 100% { transform: translateY(-4px); } }
+  .rec.fresh { animation: arrive 560ms cubic-bezier(.2, .8, .2, 1) backwards; }
+  @keyframes arrive { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
+  .newb { position: absolute; top: 16px; right: 16px; font: 800 12px/1 var(--font-body); background: var(--sun); color: var(--ink); padding: 4px 8px; border-radius: 999px; }
+  .rec svg, .row svg { width: 16px; height: 16px; flex: none; }
+
+  .rest { display: none; gap: 8px; margin-top: 8px; }
+  .grid.all .rest { display: grid; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; min-height: 40px; padding: 0 16px; border-radius: 12px; text-align: left; cursor: pointer;
+    font: 700 14px/1.25 var(--font-body); color: var(--ink); background: rgba(255, 255, 252, 0.8); border: 1px solid rgba(10, 35, 79, 0.06);
+    transition: border-color 120ms ease-out, background-color 120ms ease-out; }
+  .row span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row em { flex: none; font-style: normal; font-weight: 800; color: var(--ink-2); }
+  .row:hover, .row:focus-visible, .row.sel { background: #FFFFFC; border-color: var(--hue); outline: none; }
+  .row.done em { color: var(--success); }
+  .more { display: block; min-height: 40px; margin: 24px auto 0; padding: 0 16px; border: 0; border-radius: 999px; background: transparent; color: var(--ink);
+    font: 700 var(--t-body)/1 var(--font-body); cursor: pointer; opacity: 0; transition: background-color 120ms ease-out; }
+  .more:hover, .more:focus-visible { background: rgba(255, 255, 252, 0.45); outline: none; }
+
+  /* The shared lesson card opens on the side away from the card you clicked. */
+  .kg-card.os-left { left: 16px; right: auto; }
+  body.card-open .os-bar { opacity: 0 !important; pointer-events: none; }
+
+  @media (max-width: 1000px) { .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  @media (max-width: 640px) {
+    .grid { grid-template-columns: 1fr; gap: 8px; }
+    .rec { min-height: 64px; flex-direction: row; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 16px 16px 24px; }
+    .rec::before { left: 0; top: 16px; bottom: 16px; width: 4px; height: auto; border-radius: 0 4px 4px 0; }
+    .rec .dn { display: none; }
+    .rec .fn { margin: 0; padding: 0; }
+    .rec .go::before { display: none; }
+    .newb { top: -8px; right: 16px; }
+    .tm { width: 100%; }
+    .tlayout { padding: 32px 16px 104px; gap: 24px; }
+  }
+
+  /* ── Scrubber (quiet; above the shared dock) ── */
+  .os-bar { position: fixed; left: 50%; bottom: 64px; transform: translateX(-50%); z-index: 41; width: min(560px, calc(100vw - 32px));
+    display: flex; align-items: center; gap: 8px; opacity: 0; transition: opacity 300ms ease-out; }
+  .os-bar.on { opacity: 1; }
+  .os-bar.on.ended { opacity: 0.6; }
+  .os-bar.on.ended:hover, .os-bar.on.ended:focus-within { opacity: 1; }
+  .os-btn { height: 32px; padding: 0 12px; border: 0; border-radius: 999px; background: transparent; color: var(--mist); cursor: pointer;
+    font: 700 13px/1 var(--font-body); transition: color 120ms ease-out, background-color 120ms ease-out; }
+  .os-btn:hover { color: var(--foam); background: rgba(10, 35, 79, 0.35); }
+  .os-btn.os-play { width: 32px; padding: 0; display: grid; place-items: center; }
+  .os-btn svg { width: 12px; height: 12px; }
+  .os-btn:focus-visible { outline: 2px solid rgba(95, 198, 247, 0.6); outline-offset: 1px; }
+  .os-track { position: relative; flex: 1; height: 32px; cursor: pointer; touch-action: none; margin: 0 8px; }
+  .os-track::before { content: ''; position: absolute; left: 0; right: 0; top: 50%; height: 2px; margin-top: -1px; border-radius: 2px; background: rgba(217, 228, 242, 0.22); }
+  .os-fill { position: absolute; left: 0; top: 50%; height: 2px; margin-top: -1px; border-radius: 2px; background: rgba(255, 255, 252, 0.6); width: 0; }
+  .os-tick { position: absolute; top: 50%; width: 2px; height: 8px; margin: -4px 0 0 -1px; border-radius: 2px; background: rgba(255, 255, 252, 0.32); }
+  .os-head { position: absolute; top: 50%; left: 0; width: 10px; height: 10px; margin: -5px 0 0 -5px; border-radius: 50%; background: var(--foam); transition: transform 120ms ease-out; }
+  .os-track:hover .os-head { transform: scale(1.4); }
+  .os-label { font: 600 13px/1 var(--font-body); color: var(--mist); opacity: 0.85; width: 96px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  @media (max-width: 640px) {
+    .os-bar { left: 8px; right: 64px; width: auto; transform: none; bottom: 64px; }
+    .os-label { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .rec, .tbar i, .tlayout, .os-head, .scene { transition: none; }
+    .rec.fresh, .rec.won-anim, .tplus.go { animation-duration: 1ms; }
+  }
+</style>
+</head>
+<body>
+<div id="world"><canvas id="fx" aria-hidden="true"></canvas><div id="stage" aria-live="off"></div></div>
+<div class="lb top"></div><div class="lb bot"></div><div id="flash"></div>
+
+<script type="module">
+import { createGraph, DOMAIN_HUES, pct, clamp, projectedScore } from '../shared/graph.js';
+import { mountChrome, params } from '../shared/chrome.js';
+import { createLessonCard } from '../shared/lesson-card.js';
+import { THEMES } from '../shared/audio-themes.js';
+
+/* QA params: ?skipgate=1 · &scene=N (1–6) · &t=s (seconds; relative to the scene when scene is set,
+   otherwise global) · &demo=complete (finish a recommended lesson) · &perf=1 (window.__perf frame log). */
+
+const RM = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const SUN = '#FFF44E', FOAM = '#FFFFFC', DAY = 86400000;
+const graph = createGraph();
+
+// ── tiny utils ─────────────────────────────────────────────
+const $ = (s, r = document) => r.querySelector(s);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const h = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
+const add = (p, cls, html, tag = 'div') => { const e = h(tag, cls, html); p.append(e); return e; };
+const seg = (t, a, b) => clamp((t - a) / (b - a), 0, 1);
+const smooth = (a, b, x) => { const k = seg(x, a, b); return k * k * (3 - 2 * k); };
+const lerp = (a, b, k) => a + (b - a) * k;
+const E = {
+  outCubic: (x) => 1 - Math.pow(1 - x, 3),
+  outExpo: (x) => (x >= 1 ? 1 : 1 - Math.pow(2, -10 * x)),
+  inCubic: (x) => x * x * x,
+  inOut: (x) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2),
+  outBack: (x) => { const c1 = 1.6, c3 = c1 + 1; return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2); },
+};
+const hueOf = (l) => DOMAIN_HUES[l.domain.label];
+const dayStart = (d) => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x.getTime(); };
+const ladder = (a, b) => a.parent.id - b.parent.id || a.rung - b.rung;
+/** The next rungs to climb in a domain: its open lessons in ladder order. */
+const frontierOf = (d) => graph.leaves.filter((l) => l.domain === d && l.state === 'frontier').sort(ladder);
+const spoken = (n) => (n >= 1100 && n < 2000 && n % 100 === 0
+  ? ['eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen'][n / 100 - 11] + ' hundred'
+  : String(n));
+const rgbOf = (hex) => { const n = parseInt(hex.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
+const mixHex = (a, b, k) => { const pa = rgbOf(a), pb = rgbOf(b); return `rgb(${pa.map((v, i) => Math.round(lerp(v, pb[i], k))).join(',')})`; };
+
+/** Opacity + translate + scale in one write (no filters: they cost a repaint per element per frame). */
+function T(el, o = 1, x = 0, y = 0, s = 1) {
+  el.style.opacity = o.toFixed(3);
+  el.style.transform = `translate3d(${x.toFixed(1)}px, ${y.toFixed(1)}px, 0) scale(${s.toFixed(4)})`;
+}
+/** Split text into word spans of char spans (words still wrap). */
+function splitWords(el, text) {
+  el.textContent = '';
+  const chars = [], words = [];
+  text.split(' ').forEach((w, i, arr) => {
+    const ws = h('span', 'w');
+    for (const c of w) { const cs = h('span', 'ch'); cs.textContent = c; ws.append(cs); chars.push(cs); }
+    el.append(ws); words.push(ws);
+    if (i < arr.length - 1) el.append(document.createTextNode(' '));
+  });
+  return { chars, words };
+}
+/** Fixed-width digits so a racing counter doesn't wobble. */
+function setDigits(el, str) {
+  if (el._s === str) return;
+  el._s = str;
+  if (!el._d || el._d.length !== str.length) { el.textContent = ''; el._d = [...str].map(() => add(el, 'dg', '', 'span')); }
+  [...str].forEach((c, i) => { if (el._d[i].textContent !== c) el._d[i].textContent = c; });
+}
+function setPlain(el, str) { if (el._s === str && !el._d) return; el._s = str; el._d = null; el.textContent = str; }
+const heartbeat = (t) => {
+  const P = 1.76, u = ((t % P) + P) % P, p = (x) => (x < 0 ? 0 : Math.exp(-x * 9));
+  return Math.min(1, p(u) + 0.6 * p(u - 0.44));
+};
+
+// ── chrome ────────────────────────────────────────────────
+const S0 = graph.stats();
+const { score } = mountChrome({
+  id: 'origin-story',
+  eyebrow: 'Your SAT journey',
+  title: 'Origin Story',
+  tagline: `The story of your first ${S0.days} days.`,
+  gateBackground: 'linear-gradient(180deg, #2B8DD8 0%, #113F87 45%, #02091A 100%)',
+  dark: true,
+  beginLabel: 'Play the trailer',
+  voiceDefault: true,
+  onBegin: () => start(),
+});
+const say = (text) => { score.narrate(text).catch(() => {}); };
+// Studio-recorded narration (ElevenLabs voice "Callum"), keyed by the exact lines `say()` speaks.
+// A line without a recording (e.g. numbers changed after completing lessons) is simply skipped.
+{
+  const first = graph.journey()[0];
+  score.setVoiceClips({
+    [`Day one. You started with ${first?.label}.`]: './voice/line-0.mp3',
+    [`${S0.mastered} lessons. Every one of them, earned.`]: './voice/line-1.mp3',
+    'Some chapters aren’t written yet.': './voice/line-2.mp3',
+    'Here’s what all of it is worth.': './voice/line-3.mp3',
+    [`Goal: fifteen hundred. ${S0.goalScore - S0.score} points to go.`]: './voice/line-4.mp3',
+  });
+}
+/** Cut any line still playing (seek / pause) so lines never overlap a different scene. */
+const hushVoice = () => { if (score.voiceOn) { score.setVoice(false); score.setVoice(true); } };
+
+// Semantic sound events. `impact` and `whoosh` use the synthesized versions until the theme supplies samples;
+// `sonar` stays silent until it does.
+const THEME = THEMES['origin-story'] || {};
+const BRIDGE = { impact: () => score.impact(1), whoosh: () => score.whoosh(true) };
+const sfx = (name) => (THEME.sfx?.[name] || !BRIDGE[name] ? score.sfx(name) : BRIDGE[name]());
+
+// The lesson card's own hype caption is muted: the card state + score count-up already say it.
+let silentClose = false;
+const lessonCard = createLessonCard(graph, {
+  score, caption: () => {},
+  onComplete: (evt) => inst?.onComplete?.(evt),
+  onOpen: (n) => { document.body.classList.add('card-open'); inst?.onOpen?.(n); },
+  onClose: () => { document.body.classList.remove('card-open'); if (!silentClose) sfx('back'); inst?.onClose?.(); },
+});
+
+// ═════════════════════ OCEAN ═════════════════════
+// A depth column from bright sky-lit surface (0) to abyss (1). The camera shows SPAN of it; the sub rises
+// through it as the story progresses. Everything heavy is cached once: the gradient, the light rays, caustics.
+const world = $('#world'), stage = $('#stage'), flashEl = $('#flash'), cv = $('#fx'), g = cv.getContext('2d');
+let W = innerWidth, H = innerHeight, DPR = 1;
+const SPAN = 0.34, COL_TOP = -0.3, COL_BOT = 1.02, COL_H = 1024;
+const colY = (d) => ((d - COL_TOP) / (COL_BOT - COL_TOP)) * COL_H;
+const oceanCol = (() => {
+  const c = document.createElement('canvas'); c.width = 2; c.height = COL_H;
+  const x = c.getContext('2d'), gr = x.createLinearGradient(0, 0, 0, COL_H);
+  [[-0.3, '#EAF8FF'], [-0.003, '#C6EDFF'], [0, '#93D9FB'], [0.05, '#72CCF6'], [0.15, '#47AFEA'], [0.28, '#2B8DD8'],
+    [0.42, '#1B64B0'], [0.57, '#10397E'], [0.72, '#0A2453'], [0.86, '#051434'], [1.02, '#010510']]
+    .forEach(([d, col]) => gr.addColorStop(clamp(colY(d) / COL_H, 0, 1), col));
+  x.fillStyle = gr; x.fillRect(0, 0, 2, COL_H);
+  return c;
+})();
+/** Soft god-rays: feathered beams drawn once, stretched under the surface each frame. */
+const rayTex = (() => {
+  const c = document.createElement('canvas'); c.width = 512; c.height = 512;
+  const x = c.getContext('2d');
+  x.globalCompositeOperation = 'lighter';
+  const beams = [[0.07, 30, 0.04], [0.2, 56, -0.03], [0.34, 24, 0.05], [0.48, 72, 0], [0.62, 36, -0.04], [0.76, 22, 0.03], [0.9, 48, -0.02]];
+  for (const [fx, w, lean] of beams) {
+    const x0 = fx * 512, x1 = x0 + lean * 512 + (fx - 0.5) * 140;
+    for (let k = 0; k < 6; k++) {
+      const s = 1 + k * 0.55, gr = x.createLinearGradient(0, 0, 0, 512);
+      gr.addColorStop(0, 'rgba(255,255,255,0.11)'); gr.addColorStop(0.55, 'rgba(255,255,255,0.03)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+      x.fillStyle = gr;
+      x.beginPath(); x.moveTo(x0 - w * 0.3 * s, 0); x.lineTo(x0 + w * 0.3 * s, 0); x.lineTo(x1 + w * s, 512); x.lineTo(x1 - w * s, 512); x.closePath(); x.fill();
+    }
+  }
+  return c;
+})();
+/** Caustic web: a small tileable cellular-noise texture, two layers drift past each other under the surface. */
+const causticTile = (() => {
+  const S = 128, c = document.createElement('canvas'); c.width = S; c.height = S;
+  const x = c.getContext('2d'), img = x.createImageData(S, S), pts = [];
+  let seed = 7;
+  const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  for (let i = 0; i < 18; i++) pts.push([rnd() * S, rnd() * S]);
+  for (let y = 0; y < S; y++) for (let xx = 0; xx < S; xx++) {
+    let d1 = 1e9, d2 = 1e9;
+    for (const [px, py] of pts) for (let ox = -S; ox <= S; ox += S) for (let oy = -S; oy <= S; oy += S) {
+      const d = Math.hypot(xx - px - ox, y - py - oy);
+      if (d < d1) { d2 = d1; d1 = d; } else if (d < d2) d2 = d;
+    }
+    const v = Math.exp(-(d2 - d1) * 0.55), i = (y * S + xx) * 4;
+    img.data[i] = img.data[i + 1] = img.data[i + 2] = 255; img.data[i + 3] = Math.round(v * 255);
+  }
+  x.putImageData(img, 0, 0);
+  return c;
+})();
+let causticPat = null;
+
+const snow = [], bubbles = [], pings = [], ripples = [];
+const FX = { flash: 0, shake: 0 };
+function resize() {
+  DPR = Math.min(2, devicePixelRatio || 1); W = innerWidth; H = innerHeight;
+  cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
+  causticPat = g.createPattern(causticTile, 'repeat');
+  const n = Math.round(clamp((W * H) / 9000, 50, 150));
+  snow.length = 0;
+  for (let i = 0; i < n; i++) snow.push({ x: Math.random() * W, y: Math.random() * H, z: 0.3 + Math.random() * 0.7, a: 0.25 + Math.random() * 0.5, ph: Math.random() * 6.28, r: 0.8 + Math.random() * 1.4 });
+}
+resize();
+function bubble(x, y, r = 1.5 + Math.random() * 3) {
+  if (bubbles.length < 70) bubbles.push({ x, y, r, life: 0, max: 1.6 + Math.random() * 1.8, ph: Math.random() * 6.28 });
+}
+const bubbleBurst = (x, y, n, spread = 30) => { for (let i = 0; i < n; i++) bubble(x + (Math.random() - 0.5) * spread * 2, y + (Math.random() - 0.5) * spread); };
+const ping = (x, y) => { if (pings.length < 8) pings.push({ x, y, age: 0 }); };
+const flash = (a) => { FX.flash = Math.max(FX.flash, RM ? a * 0.4 : a); };
+const shake = (a) => { FX.shake = Math.max(FX.shake, a); };
+
+// ── Camera + sub tracks (global time; keys are set once the scene list exists) ──
+let CAM = [[0, 0.86]], SUBL = [[0, 0.2, 0.76, 1]], SUBP = [[0, 0.5, 0.8, 1]], CUTS = [];
+function track(keys, tt) {
+  if (tt <= keys[0][0]) return keys[0].slice(1);
+  for (let i = 1; i < keys.length; i++) if (tt <= keys[i][0]) {
+    const [t0, ...a] = keys[i - 1], [t1, ...b] = keys[i], k = E.inOut((tt - t0) / Math.max(1e-6, t1 - t0));
+    return a.map((v, j) => lerp(v, b[j], k));
+  }
+  return keys[keys.length - 1].slice(1);
+}
+const camAt = (tt) => track(CAM, tt)[0];
+const portrait = () => W < 640 || H > W * 1.15;
+/** Sub pose at timeline time tt and free-running clock ck: screen x/y, length, pitch. */
+function subAt(tt, ck) {
+  const [fx, fy, sc] = track(portrait() ? SUBP : SUBL, tt);
+  const L = clamp(Math.min(W, H) * 0.2, 72, 210) * sc;
+  const bob = RM ? 0 : Math.sin(ck * 1.15) * 0.035 * L;
+  let bank = 0;
+  for (const c of CUTS) { const u = tt - c; if (u > 0 && u < 1.6) bank += 0.07 * Math.sin(u * 7) * Math.exp(-u * 2.6); }
+  // Keep the sub and its escort clear of the bottom letterbox on short screens.
+  const y = fy < 1 ? Math.min(fy * H, H - clamp(H * 0.11, 96, 124) - 0.72 * L) : fy * H;
+  return { x: fx * W, y: y + bob, L, bank: RM ? 0 : bank, pitch: RM ? 0 : Math.sin(ck * 0.9) * 0.025 };
+}
+
+// ── Dolphins: three silhouettes with a flexing spine; formation + loops + leaps ──
+const DOL = [{ fx: 1.05, fy: 0.05, ph: 0, pp: 0 }, { fx: -0.92, fy: -0.38, ph: 2.1, pp: 2.1 }, { fx: 0.25, fy: 0.45, ph: 4.2, pp: 0.3 }];
+// Body half-thickness above / below the spine (fractions of length): thin beak, rounded melon, slim taper.
+const dolTop = (s) => (s < 0.07 ? lerp(0.012, 0.02, s / 0.07) : lerp(0.02, 0.084, smooth(0.07, 0.24, s))) * (1 - 0.86 * smooth(0.42, 1, s));
+const dolBot = (s) => (s < 0.07 ? lerp(0.009, 0.015, s / 0.07) : lerp(0.015, 0.074, smooth(0.07, 0.34, s))) * (1 - 0.84 * smooth(0.45, 1, s));
+function formation(i, sub, ck) {
+  const d = DOL[i], m = RM ? 0 : 1;
+  return { x: sub.x + (d.fx + 0.1 * Math.sin(ck * 0.6 + d.pp * 1.7) * m) * sub.L, y: sub.y + (d.fy + 0.12 * Math.sin(ck * 1.25 + d.pp) * m) * sub.L };
+}
+/** Position of dolphin i at (timeline lt, clock ck), blending formation with any active maneuver. */
+function dolphinAt(i, lt, ck, tt) {
+  const sub = subAt(tt, ck);
+  let p = formation(i, sub, ck);
+  for (const mv of inst?.moves || []) {
+    if (mv.d !== i) continue;
+    const u = (lt - mv.t0) / mv.dur;
+    if (u <= 0 || u >= 1) continue;
+    const q = mv.path(u, sub), env = smooth(0, 0.18, u) * (1 - smooth(0.82, 1, u));
+    p = { x: lerp(p.x, q.x, env), y: lerp(p.y, q.y, env) };
+  }
+  return p;
+}
+const loopMove = (d, t0, dur = 1.6, r = 1.55) => ({
+  d, t0, dur, path: (u, sub) => {
+    const a0 = Math.atan2(DOL[d].fy, DOL[d].fx), th = a0 + Math.PI * 2 * E.inOut(u);
+    return { x: sub.x + Math.cos(th) * r * sub.L * 1.1, y: sub.y + Math.sin(th) * r * sub.L * 0.72 };
+  },
+});
+/** A leap through the surface line at screen x-range [x0, x1] (fractions of W). */
+const leapMove = (d, t0, x0, x1, dur = 1.5) => ({
+  d, t0, dur, leap: true, path: (u) => {
+    const ys = surfaceY(), k = smooth(0.12, 0.88, u), x = lerp(x0, x1, k) * W;
+    const apex = Math.min(H * 0.1, Math.max(24, ys - (portrait() ? 0.11 : 0.13) * H)), base = ys + 0.14 * H;
+    return { x, y: base - (base - apex) * Math.sin(Math.PI * k) };
+  },
+});
+
+// ── Drawing ──
+let cam = 0.86, camPrev = 0.86, subAng = 0;
+const topDepth = () => cam - SPAN / 2;
+const depthY = (d) => ((d - topDepth()) / SPAN) * H;
+const surfaceY = () => depthY(0);
+
+function hullPath(L) {
+  g.beginPath();
+  g.moveTo(-L * 0.5, 0);
+  g.bezierCurveTo(-L * 0.45, -L * 0.11, -L * 0.3, -L * 0.155, -L * 0.1, -L * 0.155);
+  g.lineTo(L * 0.22, -L * 0.155);
+  g.bezierCurveTo(L * 0.43, -L * 0.155, L * 0.53, -L * 0.075, L * 0.53, 0);
+  g.bezierCurveTo(L * 0.53, L * 0.09, L * 0.43, L * 0.15, L * 0.22, L * 0.15);
+  g.lineTo(-L * 0.1, L * 0.15);
+  g.bezierCurveTo(-L * 0.3, L * 0.15, -L * 0.45, L * 0.1, -L * 0.5, 0);
+  g.closePath();
+}
+function finsPath(L) {
+  g.moveTo(-L * 0.12, -L * 0.15); g.lineTo(-L * 0.06, -L * 0.26); g.lineTo(L * 0.08, -L * 0.26);
+  g.quadraticCurveTo(L * 0.13, -L * 0.22, L * 0.15, -L * 0.15); g.closePath();
+  g.moveTo(-L * 0.4, -L * 0.04); g.lineTo(-L * 0.55, -L * 0.15); g.lineTo(-L * 0.5, -L * 0.02); g.closePath();
+  g.moveTo(-L * 0.4, L * 0.04); g.lineTo(-L * 0.55, L * 0.15); g.lineTo(-L * 0.5, L * 0.02); g.closePath();
+}
+/** An original little sub: rounded hull, sail, stern fins, a sun stripe, glowing portholes, headlight. */
+function drawSub(s, ck, light, amb, glow) {
+  const L = s.L;
+  g.save(); g.translate(s.x, s.y); g.rotate(subAng + s.bank + s.pitch);
+  if (light > 0.02) {
+    g.globalCompositeOperation = 'lighter';
+    for (const [spread, a] of [[1, 0.07], [0.55, 0.09]]) {
+      const gr = g.createLinearGradient(L * 0.5, 0, L * 3, 0);
+      gr.addColorStop(0, `rgba(207,239,255,${(a * light).toFixed(3)})`); gr.addColorStop(1, 'rgba(207,239,255,0)');
+      g.fillStyle = gr; g.beginPath(); g.moveTo(L * 0.48, -L * 0.03); g.lineTo(L * 3, -L * 0.5 * spread + L * 0.1); g.lineTo(L * 3, L * 0.62 * spread + L * 0.1); g.lineTo(L * 0.48, L * 0.06); g.closePath(); g.fill();
+    }
+    g.globalCompositeOperation = 'source-over';
+  }
+  const spin = Math.abs(Math.sin(ck * 21));
+  g.fillStyle = '#7E93AA';
+  g.beginPath(); g.ellipse(-L * 0.565, 0, L * 0.018, L * 0.12 * (0.25 + 0.75 * spin), 0, 0, Math.PI * 2); g.fill();
+  const body = g.createLinearGradient(0, -L * 0.3, 0, L * 0.18);
+  body.addColorStop(0, '#F6F9FC'); body.addColorStop(0.6, '#C8D5E3'); body.addColorStop(1, '#7D91A8');
+  g.fillStyle = body; g.beginPath(); finsPath(L); g.fill();
+  hullPath(L); g.fill();
+  g.save(); hullPath(L); g.clip(); g.fillStyle = '#F2C94C'; g.fillRect(-L * 0.36, L * 0.035, L * 0.68, L * 0.035); g.restore();
+  if (amb < 0.99) { g.fillStyle = `rgba(2,10,30,${((1 - amb) * 0.72).toFixed(3)})`; g.beginPath(); finsPath(L); g.fill(); hullPath(L); g.fill(); }
+  for (const [px, r] of [[0.2, 0.062], [0.03, 0.042]]) {
+    g.fillStyle = '#5E7590'; g.beginPath(); g.arc(px * L, -L * 0.035, r * L * 1.25, 0, Math.PI * 2); g.fill();
+    const pg = g.createRadialGradient(px * L - r * L * 0.3, -L * 0.05, 0, px * L, -L * 0.035, r * L);
+    pg.addColorStop(0, '#FFFBD6'); pg.addColorStop(1, mixHex('#C79A00', '#FFE45C', glow));
+    g.fillStyle = pg; g.beginPath(); g.arc(px * L, -L * 0.035, r * L, 0, Math.PI * 2); g.fill();
+  }
+  if (glow > 0.2 && amb < 0.8) {
+    g.globalCompositeOperation = 'lighter';
+    const hg = g.createRadialGradient(L * 0.2, -L * 0.035, 0, L * 0.2, -L * 0.035, L * 0.22);
+    hg.addColorStop(0, `rgba(255,236,140,${(0.32 * glow * (1 - amb)).toFixed(3)})`); hg.addColorStop(1, 'rgba(255,236,140,0)');
+    g.fillStyle = hg; g.fillRect(-L * 0.05, -L * 0.3, L * 0.5, L * 0.5);
+    g.globalCompositeOperation = 'source-over';
+  }
+  if (light > 0.02) { g.fillStyle = `rgba(230,248,255,${(0.9 * light).toFixed(3)})`; g.beginPath(); g.arc(L * 0.505, L * 0.03, L * 0.02, 0, Math.PI * 2); g.fill(); }
+  g.restore();
+}
+/** A dolphin silhouette: spine-driven body with a travelling up-down flex, dorsal + pectoral fins, flukes. */
+const DN = 24, dTop = new Array(DN + 1), dBot = new Array(DN + 1);
+function drawDolphin(x, y, L, ang, ph, top, belly) {
+  g.save(); g.translate(x, y); g.rotate(ang);
+  const amp = RM ? 0.02 : 0.075;
+  let tx = 0, ty = 0, nxT = 0, nyT = -1, tailX = 0, tailY = 0;
+  for (let i = 0; i <= DN; i++) {
+    const s = i / DN, px = L * (0.5 - s), py = amp * L * s * s * Math.sin(ph - s * 2.6);
+    const s2 = s + 0.01, py2 = amp * L * s2 * s2 * Math.sin(ph - s2 * 2.6);
+    const dx = -L * 0.01, dy = py2 - py, len = Math.hypot(dx, dy), nx = dy / len, ny = -dx / len;
+    // n points to the back (screen up) for a right-facing dolphin.
+    const wt = L * dolTop(s), wb = L * dolBot(s);
+    dTop[i] = [px - nx * wt, py - ny * wt]; dBot[i] = [px + nx * wb, py + ny * wb];
+    if (i === DN) { tx = dx / len; ty = dy / len; nxT = nx; nyT = ny; tailX = px; tailY = py; }
+  }
+  const gr = g.createLinearGradient(0, -L * 0.12, 0, L * 0.12);
+  gr.addColorStop(0, top); gr.addColorStop(1, belly);
+  g.fillStyle = gr;
+  g.beginPath();
+  g.moveTo(dTop[0][0], dTop[0][1]);
+  for (let i = 1; i < DN; i++) g.quadraticCurveTo(dTop[i][0], dTop[i][1], (dTop[i][0] + dTop[i + 1][0]) / 2, (dTop[i][1] + dTop[i + 1][1]) / 2);
+  g.lineTo(dTop[DN][0], dTop[DN][1]);
+  // flukes: a narrow, swept crescent (horizontal flukes seen almost edge-on)
+  g.quadraticCurveTo(tailX + tx * L * 0.07 - nxT * L * 0.03, tailY + ty * L * 0.07 - nyT * L * 0.03, tailX + tx * L * 0.16 - nxT * L * 0.075, tailY + ty * L * 0.16 - nyT * L * 0.075);
+  g.quadraticCurveTo(tailX + tx * L * 0.1, tailY + ty * L * 0.1, tailX + tx * L * 0.16 + nxT * L * 0.075, tailY + ty * L * 0.16 + nyT * L * 0.075);
+  g.quadraticCurveTo(tailX + tx * L * 0.07 + nxT * L * 0.03, tailY + ty * L * 0.07 + nyT * L * 0.03, dBot[DN][0], dBot[DN][1]);
+  for (let i = DN - 1; i > 0; i--) g.quadraticCurveTo(dBot[i][0], dBot[i][1], (dBot[i][0] + dBot[i - 1][0]) / 2, (dBot[i][1] + dBot[i - 1][1]) / 2);
+  g.lineTo(dBot[0][0], dBot[0][1]);
+  g.closePath(); g.fill();
+  // falcate dorsal fin (curved back, concave trailing edge) and a small pectoral fin
+  const a = dTop[10], b = dTop[14], apex = [dTop[14][0] - L * 0.045, dTop[14][1] - L * 0.095];
+  g.beginPath(); g.moveTo(a[0], a[1] + 1); g.quadraticCurveTo(a[0] - L * 0.01, apex[1] + L * 0.012, apex[0], apex[1]);
+  g.quadraticCurveTo(b[0] - L * 0.005, b[1] - L * 0.025, b[0] - L * 0.005, b[1] + 1); g.closePath(); g.fill();
+  const c = dBot[5], d2 = dBot[7];
+  g.beginPath(); g.moveTo(c[0], c[1] - 1); g.quadraticCurveTo(c[0] - L * 0.03, c[1] + L * 0.06, d2[0] - L * 0.055, d2[1] + L * 0.07); g.lineTo(d2[0], d2[1] - 1); g.closePath(); g.fill();
+  g.restore();
+}
+
+/** One frame of the ocean. P = scene params: fwd (world drift px/s), bubbles (per s), murk, snow, light. */
+let bubbleAcc = 0;
+const prevDolY = [0, 0, 0];
+function drawWorld(dt, P, lt) {
+  const ck = clock, tt = t;
+  camPrev = cam; cam = camAt(tt);
+  const camV = dt > 0 ? (cam - camPrev) / dt : 0;           // depth units / s (negative = rising)
+  const scrollY = (-camV / SPAN) * H;                       // px/s the water moves down as we rise
+  g.setTransform(DPR, 0, 0, DPR, 0, 0);
+  g.globalCompositeOperation = 'source-over'; g.globalAlpha = 1;
+  const top = topDepth();
+  g.drawImage(oceanCol, 0, colY(top), 2, (SPAN / (COL_BOT - COL_TOP)) * COL_H, 0, 0, W, H);
+
+  // god rays + caustics, strongest near the surface
+  const ys = surfaceY(), ray = clamp(1 - cam / 0.55, 0, 1) * (P.rays ?? 1);
+  if (ray > 0.01) {
+    // One additive blit for the rays (cheap on every renderer); the shimmer comes from a slow sway + breathing alpha.
+    g.globalCompositeOperation = 'lighter';
+    const hR = (0.5 / SPAN) * H, sway = RM ? 0 : Math.sin(ck * 0.23) * W * 0.02;
+    g.globalAlpha = ray * (0.42 + (RM ? 0 : 0.06 * Math.sin(ck * 0.7)));
+    const y0 = Math.max(ys, -hR);
+    if (ys + hR > 0) g.drawImage(rayTex, 0, ((y0 - ys) / hR) * 512, 512, 512 - ((y0 - ys) / hR) * 512, -W * 0.15 + sway, y0, W * 1.3, hR - (y0 - ys));
+    // Caustics: one drifting pattern layer in a thin band just under the surface.
+    const band = (0.06 / SPAN) * H;
+    if (ys + band > 0 && ys < H) {
+      const sc = 2, ox = (ck * 9) % (128 * sc), oy = (ck * 5) % (128 * sc);
+      g.save(); g.beginPath(); g.rect(0, Math.max(0, ys), W, band); g.clip();
+      g.globalAlpha = 0.14 * ray; g.setTransform(DPR * sc, 0, 0, DPR * sc, DPR * ox, DPR * (ys + oy));
+      g.fillStyle = causticPat; g.fillRect(-128, -128, W / sc + 256, band / sc + 256);
+      g.restore(); g.setTransform(DPR, 0, 0, DPR, 0, 0);
+    }
+    g.globalCompositeOperation = 'source-over';
+  }
+  // the surface itself, a shimmering line
+  if (ys > -20 && ys < H + 20) {
+    g.globalAlpha = 1;
+    const sheen = g.createLinearGradient(0, ys, 0, ys + 20);
+    sheen.addColorStop(0, 'rgba(255,255,255,0.4)'); sheen.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = sheen; g.fillRect(0, ys, W, 20);
+    g.beginPath();
+    for (let x = 0; x <= W + 24; x += 24) {
+      const yy = ys + Math.sin(x * 0.011 + ck * 1.1) * 3 + Math.sin(x * 0.027 - ck * 1.6) * 1.6;
+      if (x === 0) g.moveTo(x, yy); else g.lineTo(x, yy);
+    }
+    g.strokeStyle = 'rgba(255,255,255,0.9)'; g.lineWidth = 1.5; g.stroke();
+  }
+
+  // marine snow: drifts down, streams past as we rise, slides left as we travel
+  const fwd = P.fwd ?? 14, vis = (0.25 + 0.75 * smooth(0.15, 0.8, cam)) * (P.snow ?? 1);
+  g.fillStyle = '#D6ECFF';
+  for (const p of snow) {
+    p.y += (6 + scrollY) * p.z * dt; p.x += (-fwd * p.z + (RM ? 0 : Math.sin(ck * 0.5 + p.ph) * 3)) * dt;
+    if (p.y > H + 4) { p.y -= H + 8; p.x = Math.random() * W; } else if (p.y < -4) { p.y += H + 8; p.x = Math.random() * W; }
+    if (p.x < -4) p.x += W + 8; else if (p.x > W + 4) p.x -= W + 8;
+    g.globalAlpha = p.a * vis * p.z;
+    const streak = RM ? 0 : Math.min(18, Math.abs(scrollY) * 0.04 * p.z);
+    if (streak > 1.5) g.fillRect(p.x, p.y - streak, p.r * 0.8, streak + p.r);
+    else g.fillRect(p.x, p.y, p.r, p.r);
+  }
+  if (P.murk) { g.globalAlpha = P.murk; g.fillStyle = '#020814'; g.fillRect(0, 0, W, H); }
+
+  // sonar pings
+  g.lineWidth = 1.5;
+  for (let i = pings.length - 1; i >= 0; i--) {
+    const pg = pings[i]; pg.age += dt;
+    const k = pg.age / 1.4;
+    if (k >= 1) { pings.splice(i, 1); continue; }
+    g.globalAlpha = (1 - k) * (1 - k) * 0.6; g.strokeStyle = '#9EDFFF';
+    g.beginPath(); g.arc(pg.x, pg.y, 12 + E.outCubic(k) * Math.min(W, H) * 0.5, 0, Math.PI * 2); g.stroke();
+  }
+  // surface ripples (splashes)
+  for (let i = ripples.length - 1; i >= 0; i--) {
+    const r = ripples[i]; r.age += dt;
+    const k = r.age / 1.2;
+    if (k >= 1) { ripples.splice(i, 1); continue; }
+    g.globalAlpha = (1 - k) * 0.8; g.strokeStyle = '#FFFFFF';
+    g.beginPath(); g.ellipse(r.x, surfaceY(), 8 + k * 60, 2 + k * 5, 0, 0, Math.PI * 2); g.stroke();
+  }
+
+  // sub + dolphins
+  const sub = subAt(tt, ck);
+  const rise = -camV;
+  const targetAng = -clamp(rise * 3.5, -0.08, 0.25) + (P.subTilt ?? 0);
+  subAng += (targetAng - subAng) * (1 - Math.exp(-dt * 3));
+  const light = smooth(0.4, 0.75, cam), amb = 1 - 0.65 * smooth(0.25, 0.85, cam);
+  const shadeK = smooth(0.2, 0.75, cam);
+  const dTopC = mixHex('#062043', '#16407A', shadeK), dBelC = mixHex('#1C4F8E', '#3A74B4', shadeK);
+  const dL = sub.L * 0.82;
+  const dpos = [0, 1, 2].map((i) => {
+    const p = dolphinAt(i, lt, ck, tt), q = dolphinAt(i, lt - 0.04 * (playing && !ended ? 1 : 0), ck - 0.04, tt - 0.04 * (playing && !ended ? 1 : 0));
+    const swim = sub.L * 0.9;
+    return { ...p, ang: clamp(Math.atan2(p.y - q.y, p.x - q.x + swim * 0.04), -1.2, 1.2) };
+  });
+  // a full loop needs the true heading, not the clamped one
+  for (const [i, p] of dpos.entries()) {
+    const looping = (inst?.moves || []).some((m) => m.d === i && !m.leap && lt > m.t0 && lt < m.t0 + m.dur);
+    const leaping = (inst?.moves || []).some((m) => m.d === i && m.leap && lt > m.t0 && lt < m.t0 + m.dur);
+    if (looping || leaping) {
+      const q = dolphinAt(i, lt - 0.03, ck - 0.03, tt - 0.03);
+      p.ang = Math.atan2(p.y - q.y, p.x - q.x);
+    }
+    if (leaping) {
+      const ysN = surfaceY();
+      if ((prevDolY[i] - ysN) * (p.y - ysN) < 0) { ripples.push({ x: p.x, age: 0 }); bubbleBurst(p.x, ysN + 10, 8, 16); }
+    }
+    prevDolY[i] = p.y;
+  }
+  const dvis = P.dolphins ?? 1;
+  g.globalAlpha = dvis;
+  if (dvis > 0.01) drawDolphin(dpos[1].x, dpos[1].y, dL * 0.92, dpos[1].ang, ck * 6.5 + DOL[1].ph, dTopC, dBelC);
+  g.globalAlpha = 1;
+  const sa = P.subAlpha ?? 1;
+  if (P.sub !== 0 && sa > 0.01) {
+    g.globalAlpha = sa;
+    // exhaust bubbles
+    bubbleAcc += dt * (P.bubbles ?? 2);
+    while (bubbleAcc >= 1) { bubbleAcc -= 1; const a = subAng; bubble(sub.x - Math.cos(a) * sub.L * 0.58, sub.y - Math.sin(a) * sub.L * 0.58 + (Math.random() - 0.5) * sub.L * 0.1, 1 + Math.random() * 2.5); }
+    drawSub(sub, ck, light, amb, P.glow ?? 0.85);
+    g.globalAlpha = 1;
+  }
+  g.globalAlpha = dvis;
+  if (dvis > 0.01) for (const i of [0, 2]) drawDolphin(dpos[i].x, dpos[i].y, dL, dpos[i].ang, ck * 6.5 + DOL[i].ph, dTopC, dBelC);
+
+  // bubbles
+  g.lineWidth = 1;
+  for (let i = bubbles.length - 1; i >= 0; i--) {
+    const b = bubbles[i]; b.life += dt;
+    if (b.life > b.max || b.y < -10) { bubbles.splice(i, 1); continue; }
+    b.y += (-(28 + b.r * 9) + scrollY) * dt; b.x += ((RM ? 0 : Math.sin(b.life * 3 + b.ph) * 10) - fwd * 0.6) * dt;
+    const k = b.life / b.max;
+    g.globalAlpha = Math.min(1, b.life * 4) * (1 - k * k) * 0.7;
+    g.strokeStyle = '#E2F3FF'; g.beginPath(); g.arc(b.x, b.y, b.r, 0, Math.PI * 2); g.stroke();
+  }
+  g.globalAlpha = 1;
+}
+
+// ── story data (recomputed whenever a scene mounts, so a replay includes new wins) ──
+function storyData() {
+  const st = graph.stats();
+  const mastered = graph.journey().filter((l) => l.state === 'mastered');
+  const first = mastered[0] || null;
+  const d0 = first ? dayStart(first.masteredAt) : dayStart(new Date());
+  const dayOf = (l) => Math.round((dayStart(l.masteredAt) - d0) / DAY) + 1;
+  const byM = [...graph.domains].sort((a, b) => b.m - a.m);
+  return { st, mastered, first, dayOf, strong: byM.slice(0, 4), weakest: byM[byM.length - 1], gap: Math.max(0, st.goalScore - st.score), base: projectedScore(0) };
+}
+const subNose = () => { const s = subAt(t, clock); return { x: s.x + Math.cos(subAng) * s.L * 0.52, y: s.y + Math.sin(subAng) * s.L * 0.52 }; };
+
+// ═════════════════════ SCENES ═════════════════════
+// The story is an ascent: Day 1 in the dark deep, rising with every lesson, the score reveal in bright water,
+// the goal at the surface. Narration starts are timed to the pauses inside each recorded line.
+// render(lt) is a pure function of local time (so scrubbing works); cues fire once when playback crosses them.
+
+/* 1 · Day 1, in the deep. Voice (4.9s): "Day one." 0–0.7 · "You started with" 1.0–1.9 · lesson 3.4–4.9.
+   The sub glides in with its headlight on; its portholes pulse with the heartbeat. */
+function sceneOpen(root, D) {
+  const V = 0.9;
+  const st = add(root, 'stack');
+  const slot = add(st, 'slot');
+  const day = add(slot, 't-m k-day');
+  const dayS = splitWords(day, 'Day 1.');
+  const started = add(st, 't-body', 'You started with');
+  const first = add(st, 't-l');
+  const firstS = splitWords(first, D.first ? D.first.label + '.' : 'Your first lesson.');
+  let off = { x: 0, y: 0 };
+  return {
+    measure() { const r = slot.getBoundingClientRect(); off = { x: W / 2 - (r.left + r.width / 2), y: H / 2 - (r.top + r.height / 2) }; },
+    music: () => [0, 0.4],
+    fx: (lt) => ({ fwd: 10, bubbles: 1.5, glow: 0.55 + 0.45 * heartbeat(lt) }),
+    moves: [],
+    render(lt) {
+      dayS.chars.forEach((c, i) => { const a = V - 0.1 + i * 0.05, k = E.outCubic(seg(lt, a, a + 0.5)); T(c, seg(lt, a, a + 0.3), 0, (1 - k) * 16); });
+      const mv = E.inOut(seg(lt, V + 0.8, V + 1.5));
+      T(day, 1, off.x * (1 - mv), off.y * (1 - mv), lerp(2.3, 1, mv));
+      T(started, seg(lt, V + 1.0, V + 1.4), 0, (1 - E.outCubic(seg(lt, V + 1.0, V + 1.5))) * 8);
+      firstS.chars.forEach((c, i) => { const a = V + 3.3 + i * 0.025, k = E.outExpo(seg(lt, a, a + 0.6)); T(c, seg(lt, a, a + 0.2), 0, (1 - k) * 32); });
+      const out = E.inCubic(seg(lt, 6.7, 7.4));
+      T(st, 1 - out, 0, 0, 1 + out * 0.04);
+    },
+    cues: [
+      [V - 0.1, () => sfx('intro')],
+      [V, () => say(D.first ? `Day one. You started with ${D.first.label}.` : 'Day one.')],
+      [V + 3.3, () => { sfx('sonar'); const n = subNose(); ping(n.x, n.y); }],
+    ],
+  };
+}
+
+/* 2 · The climb. Every mastered lesson is a reading on the sub's sonar, one hard cut each, accelerating,
+   while the sub rises toward the light. Voice (4.5s): "Forty-eight lessons." · "Every one of them," · "earned." */
+function sceneMontage(root, D) {
+  const L = D.mastered, n = L.length, T0 = 1.6, T1 = 10.6, SLAM = 11.2;
+  const sched = L.map((l, i) => ({ l, i, t: T0 + (T1 - T0) * (1 - Math.pow(1 - (n > 1 ? i / (n - 1) : 0), 1.85)) }));
+  // A sonar ping (sound + ring) on readings at least 0.5s apart; the rest are quick ticks.
+  let lastPing = -1;
+  for (const s of sched) { s.ping = s.t - lastPing >= 0.5; if (s.ping) lastPing = s.t; }
+  const intro = add(root, 'stack');
+  const introT = add(intro, 't-l');
+  const introS = splitWords(introT, 'Then you kept going.');
+  const hud = add(root, 'mhud', '<span class="t-m mnum"></span><span class="t-body">lessons</span>');
+  const c1 = $('.mnum', hud);
+  const cuts = sched.map((s) => {
+    const e = add(root, 'cut', `<div class="t-l">${esc(s.l.label)}</div>`);
+    e.style.setProperty('--hue', hueOf(s.l)); e.hidden = true;
+    return e;
+  });
+  const slam = add(root, 'stack');
+  const sNum = add(slam, 't-xl sun');
+  setPlain(sNum, String(n));
+  const sA = add(slam, 't-m', 'lessons mastered.');
+  let shown = -1;
+  return {
+    music: (lt) => (lt < SLAM ? [0.25 + 0.6 * seg(lt, T0, T1), 0.3] : [0.85, 0.3]),
+    fx: (lt) => ({ fwd: lt < SLAM ? lerp(14, 70, E.inCubic(seg(lt, T0, T1))) : 18, bubbles: lt < SLAM ? lerp(2, 9, seg(lt, T0, T1)) : 3 }),
+    moves: [loopMove(0, SLAM, 1.7), loopMove(2, SLAM + 0.12, 1.7)],
+    render(lt) {
+      introS.words.forEach((w, j) => { const a = 0.15 + j * 0.15, k = E.outCubic(seg(lt, a, a + 0.3)); T(w, k, 0, (1 - k) * 16); });
+      T(introT, 1 - seg(lt, 1.2, 1.5));
+      let cur = -1;
+      for (const s of sched) if (s.t <= lt) cur = s.i;
+      const live = lt < SLAM ? cur : -1;
+      if (live !== shown) { if (shown >= 0) cuts[shown].hidden = true; if (live >= 0) cuts[live].hidden = false; shown = live; }
+      if (live >= 0) {
+        const s = sched[live], next = sched[live + 1]?.t ?? SLAM, k = E.outCubic(seg(lt, s.t, s.t + Math.min(0.22, (next - s.t) * 0.6)));
+        T(cuts[live], k, 0, 0, RM ? 1 : lerp(1.06, 1, k) * (1 + 0.02 * seg(lt, s.t, next)));
+      }
+      hud.style.opacity = (seg(lt, 1.4, 1.8) * (lt < SLAM ? 1 : 0)).toFixed(3);
+      setPlain(c1, String(cur + 1));
+      const pk = cur >= 0 ? 1 - seg(lt, sched[cur].t, sched[cur].t + 0.14) : 0;
+      c1.style.transform = `scale(${(1 + 0.1 * pk).toFixed(3)})`;
+      const k = E.outExpo(seg(lt, SLAM, SLAM + 0.4));
+      T(sNum, lt >= SLAM ? 1 : 0, 0, 0, RM ? 1 : lerp(1.3, 1, k));
+      T(sA, seg(lt, SLAM + 0.35, SLAM + 0.7), 0, (1 - E.outCubic(seg(lt, SLAM + 0.35, SLAM + 0.75))) * 16);
+      const out = E.inCubic(seg(lt, 15.2, 15.8));
+      T(slam, 1 - out, 0, 0, RM ? 1 : 1 + 0.03 * seg(lt, SLAM, 15.8));
+    },
+    cues: [
+      [0.001, () => sfx('whoosh')],
+      ...sched.map((s) => [s.t, () => { sfx('step'); if (s.ping) { sfx('sonar'); const p = subNose(); ping(p.x, p.y); } }]),
+      [SLAM - 0.05, () => say(`${n} lessons. Every one of them, earned.`)],
+      [SLAM, () => { sfx('intro'); shake(8); }],
+    ],
+  };
+}
+
+/* 3 · Chapters: one domain per bar (2s ≈ one bar at ~120 bpm), name + mastery bar.
+   On each bar landing a dolphin breaks formation and loops around the sub. */
+function sceneChapters(root, D) {
+  const LEN = 2.0, list = D.strong;
+  const st = add(root, 'stack');
+  const nm = add(st, 't-l'), row = add(st, 'barrow');
+  const fill = add(add(row, 'cbar'), 'cfill', '', 'span'), pc = add(row, 't-m cpct');
+  let shown = -1;
+  const idxAt = (lt) => Math.min(list.length - 1, Math.floor(lt / LEN));
+  return {
+    music: () => [0.81, 0.6],
+    fx: () => ({ fwd: 26, bubbles: 3 }),
+    moves: list.map((d, i) => loopMove(i % 3, i * LEN + 0.72, 1.5)),
+    render(lt) {
+      const i = idxAt(lt), u = lt - i * LEN, d = list[i];
+      if (i !== shown) { shown = i; st.style.setProperty('--hue', DOMAIN_HUES[d.label]); nm.textContent = d.label; }
+      const inK = E.outExpo(seg(u, 0, 0.4)), out = E.inCubic(seg(u, LEN - 0.26, LEN));
+      T(nm, seg(u, 0, 0.12) * (1 - out), -out * 96, 0, RM ? 1 : lerp(1.1, 1, inK));
+      const fk = E.outBack(seg(u, 0.3, 0.72));
+      fill.style.width = (clamp(d.m * fk, 0, 1) * 100).toFixed(2) + '%';
+      pc.textContent = pct(d.m * Math.min(1, fk));
+      T(row, seg(u, 0.2, 0.36) * (1 - out), -out * 64);
+    },
+    cues: list.flatMap((d, i) => [[i * LEN + 0.001, () => sfx('whoosh')], [i * LEN + 0.72, () => sfx('step')]]),
+  };
+}
+
+/* 4 · The struggle: the sub sinks a little into murkier water; unread lessons sit in the dark like faint
+   sonar contacts. Voice (2.2s) carries the line word by word. */
+function sceneStruggle(root, D) {
+  const d = D.weakest, hue = DOMAIN_HUES[d.label], V = 3.9;
+  const narrow = portrait();
+  // Quiet bands above the title (and lower right, away from the sub); nothing ever sits behind the main type.
+  const spots = narrow ? [[28, 17], [72, 23], [28, 29]] : [[14, 21], [38, 18], [62, 21], [86, 18], [62, 80], [86, 83]];
+  const left = graph.leaves.filter((l) => l.domain === d && l.state !== 'mastered');
+  const ghosts = left.slice(0, spots.length).map((l, i) => {
+    const e = add(root, 'os-ghost', `<span>${esc(l.label)}</span>`);
+    e.style.left = spots[i][0] + '%'; e.style.top = spots[i][1] + '%';
+    e.style.fontSize = (narrow ? 13 : 16 + (i % 3) * 3) + 'px';
+    return { e, a: 1.4 + (i % 4) * 0.35, v: 2 + (i % 3) };
+  });
+  const a = add(root, 'stack struggle');
+  a.style.setProperty('--hue', hue);
+  const nm = add(a, 't-l', esc(d.label));
+  const row = add(a, 'barrow');
+  const fill = add(add(row, 'cbar'), 'cfill', '', 'span'), pc = add(row, 't-m cpct');
+  const b = add(root, 'stack');
+  const line = add(b, 't-l k-line');
+  const lineS = splitWords(line, 'Some chapters aren’t written yet.');
+  return {
+    music: () => [0.05, 1.4],
+    fx: (lt) => ({ fwd: 6, bubbles: 0.8, murk: 0.18 * E.inOut(seg(lt, 0, 3)), glow: 0.5, zoom: RM ? 1 : 1 + 0.02 * E.inOut(seg(lt, 0, 8)) }),
+    moves: [],
+    render(lt) {
+      const nk = E.outCubic(seg(lt, 0.3, 1.5)), aOut = E.inOut(seg(lt, 3.4, 3.9));
+      T(nm, seg(lt, 0.3, 1.3), 0, (1 - nk) * 16);
+      T(row, seg(lt, 1.0, 1.4));
+      const fk = E.inOut(seg(lt, 1.2, 3.2));
+      fill.style.width = (d.m * fk * 100).toFixed(2) + '%';
+      pc.textContent = pct(d.m * fk);
+      T(a, 1 - aOut, 0, -aOut * 16);
+      lineS.words.forEach((w, j) => { const t0 = V + j * 0.38, k = E.outCubic(seg(lt, t0, t0 + 0.45)); T(w, k, 0, (1 - k) * 16); });
+      line.classList.toggle('lit', lt >= V + 1.85);
+      for (const gh of ghosts) T(gh.e, 0.18 * seg(lt, gh.a, gh.a + 1.2), 0, -lt * gh.v);
+      root.style.opacity = (1 - E.inCubic(seg(lt, 7.3, 8))).toFixed(3);
+    },
+    cues: [[V, () => say('Some chapters aren’t written yet.')]],
+  };
+}
+
+/* 5 · The reveal: the projected score races up as the sub climbs into bright water, then lands with a
+   surfacing swell of light; all three dolphins burst into loops. Voice (2.1s) at 0.3. */
+function sceneBuild(root, D) {
+  const REV = 6.0, base = D.base, target = D.st.score;
+  const st = add(root, 'stack');
+  const lab = add(st, 't-body', 'Projected score');
+  const num = add(st, 't-xl num');
+  const sub = add(st, 't-m', `<span class="sun">+${target - base}</span> since Day 1.`);
+  return {
+    music: (lt) => (lt < REV ? [0.3 + 0.7 * seg(lt, 0.2, 5.8), 0.25] : lt < 8 ? [1, 0.2] : [0.6, 1]),
+    fx: (lt) => ({ fwd: lt < REV ? lerp(18, 60, seg(lt, 0.8, REV)) : 22, bubbles: lt < REV ? lerp(3, 12, seg(lt, 0.8, REV)) : 4,
+      rays: lt < REV ? 0.7 : 0.7 + 0.5 * (1 - seg(lt, REV, REV + 2)), baseShake: lt < REV ? 1.5 * E.inCubic(seg(lt, 3, REV)) : 0 }),
+    moves: [loopMove(0, REV + 0.05, 1.8, 1.8), loopMove(1, REV + 0.17, 1.8, 1.9), loopMove(2, REV + 0.29, 1.8, 1.7)],
+    render(lt) {
+      T(lab, seg(lt, 0.5, 0.9));
+      const v = lt < REV ? base + (target - base) * E.inCubic(seg(lt, 0.8, REV)) : target;
+      if (lt < REV) setDigits(num, String(Math.round(v / 10) * 10)); else setPlain(num, String(target));
+      num.classList.toggle('lit', lt >= REV);
+      T(num, seg(lt, 0.7, 1.1), 0, 0, RM ? 1 : lt < REV ? lerp(0.86, 1, seg(lt, 0.8, REV)) : 1 + 0.18 * (1 - E.outExpo(seg(lt, REV, REV + 0.5))));
+      T(sub, seg(lt, REV + 0.6, REV + 1.0), 0, (1 - E.outCubic(seg(lt, REV + 0.6, REV + 1.0))) * 16);
+      root.style.opacity = (1 - E.inCubic(seg(lt, 8.4, 9))).toFixed(3);
+    },
+    cues: [
+      [0.001, () => sfx('whoosh')],
+      [0.3, () => say('Here’s what all of it is worth.')],
+      [REV - 2.2, () => sfx('riser')],
+      [REV, () => { sfx('impact'); flash(0.45); shake(8); const s = subAt(t, clock); bubbleBurst(s.x, s.y, 24, s.L * 0.6); }],
+    ],
+  };
+}
+
+/* 6 · Your move. The goal is the surface, still above you. Voice (3.8s): "Goal:" · "fifteen hundred." ·
+   "320 points to go." The dolphins leap through the surface; then one recommended next lesson per domain. */
+const CHECK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
+function sceneTurn(root, D) {
+  const V = 0.3, A0 = 5.0, STEP = 0.12, FLY = 0.7;
+  root.classList.add('lw');
+  const intro = add(root, 'stack');
+  const lab = add(intro, 't-body', 'Your goal');
+  const goal = add(intro, 't-xl');
+  setPlain(goal, String(D.st.goalScore));
+  const gl = add(intro, 't-m', `<span class="sun">${D.gap}</span> points to go.`);
+
+  const lay = add(root, 'tlayout');
+  const hud = add(lay, 'thud', `<h2>Choose your next chapter.</h2>
+    <div class="tm" title="Projected score, then your goal"><span class="tplus"></span>
+    <div class="tmrow"><span class="tsc"></span><span class="arr">→</span><span>${D.st.goalScore}</span></div><div class="tbar"><i></i></div></div>`);
+  const tsc = $('.tsc', hud), tbar = $('.tbar i', hud), tplus = $('.tplus', hud);
+  const wrap = add(lay, 'gridwrap'), grid = add(wrap, 'grid');
+  const more = add(wrap, 'more', '', 'button');
+  more.type = 'button';
+  let expanded = false, exK = 0;
+  const syncScroll = () => wrap.classList.toggle('scrolls', wrap.scrollHeight > wrap.clientHeight + 2);
+  const updMore = () => { more.textContent = expanded ? 'Show less' : `See all ${graph.frontierLessons().length}`; more.setAttribute('aria-expanded', String(expanded)); };
+  more.addEventListener('click', () => {
+    expanded = !expanded; grid.classList.toggle('all', expanded); updMore(); syncScroll(); sfx(expanded ? 'select' : 'back');
+  });
+  // Clicking empty space around the cards closes the lesson card.
+  wrap.addEventListener('click', (e) => { if (e.target === wrap || e.target === grid || e.target.classList.contains('col')) lessonCard.close(); });
+
+  const fresh = new Set();
+  const action = (l) => (l.progress > 0 ? `Continue · ${pct(l.progress)}` : 'Start');
+  function makeRec(l, d) {
+    const b = h('button', 'rec');
+    b.type = 'button'; b._l = l;
+    b.innerHTML = `<span class="dn">${esc(d.label)}</span><span class="fn">${esc(l.label)}</span><span class="go">${action(l)}</span>${fresh.has(l) ? '<span class="newb">New</span>' : ''}`;
+    b.setAttribute('aria-label', `${l.label}, ${d.label}. ${action(l)}`);
+    b.addEventListener('pointerenter', () => { if (b.classList.contains('landed')) sfx('hover'); });
+    b.addEventListener('click', () => { if (b.classList.contains('landed')) lessonCard.open(l); });
+    return b;
+  }
+  function makeRow(l) {
+    const b = h('button', 'row');
+    b.type = 'button'; b._l = l;
+    b.innerHTML = `<span>${esc(l.label)}</span><em>${fresh.has(l) ? 'New' : l.progress > 0 ? pct(l.progress) : 'Start'}</em>`;
+    b.setAttribute('aria-label', `${l.label}. ${action(l)}`);
+    b.addEventListener('pointerenter', () => sfx('hover'));
+    b.addEventListener('click', () => lessonCard.open(l));
+    return b;
+  }
+  const cols = new Map();
+  function renderCol(d, landed) {
+    let c = cols.get(d);
+    if (!c) { c = { col: add(grid, 'col') }; c.col.style.setProperty('--hue', DOMAIN_HUES[d.label]); cols.set(d, c); }
+    const fr = frontierOf(d);
+    c.col.replaceChildren();
+    c.col.hidden = !fr.length;
+    c.rec = fr.length ? makeRec(fr[0], d) : null;
+    if (!c.rec) return;
+    if (landed) c.rec.classList.add('landed');
+    c.col.append(c.rec);
+    const rest = add(c.col, 'rest');
+    fr.slice(1).forEach((l) => rest.append(makeRow(l)));
+  }
+  for (const d of graph.domains) renderCol(d, false);
+  updMore();
+  const seq = [...cols.values()].map((c) => c.rec).filter(Boolean);
+  const ASSEMBLED = A0 + Math.max(0, seq.length - 1) * STEP + FLY;
+  let slots = [];
+
+  let shownScore = D.st.score, tween = null, cardWasOpen = false;
+  const setBar = (s) => { tbar.style.width = (clamp((s - D.base) / (D.st.goalScore - D.base), 0, 1) * 100).toFixed(1) + '%'; };
+  setPlain(tsc, String(shownScore));
+  setBar(shownScore);
+  const buttons = () => grid.querySelectorAll('.rec, .row');
+  /** Keep the lesson card off the card that was clicked: opposite side on desktop, scroll/lift on phones. */
+  function placeCard(n) {
+    const el = [...buttons()].find((b) => b._l === n);
+    if (!el) return;
+    const r = el.getBoundingClientRect(), card = lessonCard.el;
+    if (innerWidth > 640) {
+      if (!cardWasOpen) card.classList.toggle('os-left', r.left + r.width / 2 > innerWidth / 2);
+    } else {
+      const cardTop = innerHeight - (parseFloat(getComputedStyle(card).bottom) || 70) - card.offsetHeight - 16;
+      const cur = parseFloat(lay.dataset.lift || '0');
+      let need = r.bottom + cur - cardTop;
+      // Prefer scrolling the list (the header stays put); lift the whole layout only for what's left.
+      if (need > 0) {
+        const room = Math.max(0, wrap.scrollHeight - wrap.clientHeight - wrap.scrollTop), by = Math.min(need, room);
+        if (by > 0) { wrap.scrollBy({ top: by, behavior: RM ? 'auto' : 'smooth' }); need -= by; }
+      }
+      const lift = Math.max(0, need);
+      lay.dataset.lift = String(lift);
+      lay.style.transform = lift ? `translateY(${-lift}px)` : '';
+    }
+  }
+  const leaps = portrait()
+    ? [leapMove(0, V + 0.6, 0.12, 0.42), leapMove(2, V + 0.95, 0.58, 0.88)]
+    : [leapMove(0, V + 0.6, 0.66, 0.86), leapMove(1, V + 0.85, 0.08, 0.27), leapMove(2, V + 1.1, 0.72, 0.93)];
+
+  return {
+    measure() {
+      // Centre the collapsed group once. Expanding then only grows downward, so nothing moves under the cursor.
+      const wasAll = grid.classList.contains('all');
+      grid.classList.remove('all');
+      seq.forEach((e) => { if (!e.classList.contains('landed')) e.style.transform = 'none'; });
+      const phone = innerWidth <= 640, padB = phone ? 104 : 112, gap = phone ? 24 : 32, minTop = phone ? 32 : 48;
+      const groupH = hud.offsetHeight + gap + grid.offsetHeight + more.offsetHeight + 24 + 8;
+      lay.style.paddingTop = Math.round(Math.max(minTop, (innerHeight - padB - groupH) / 2)) + 'px';
+      slots = seq.map((e) => { const r = e.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+      if (wasAll) grid.classList.add('all');
+      syncScroll();
+    },
+    music: (lt) => (lt < 4.4 ? [0.6, 1] : [0.45, 2]),
+    // The sub and its escort step back (fade) while the full list is open, so nothing shows through the rows.
+    fx: (lt) => ({ fwd: lt < 4.4 ? 18 : 8, bubbles: lt < 4.4 ? 4 : 1.2 * (1 - exK), lb: 1 - E.inOut(seg(lt, 4.4, 5.2)),
+      sub: portrait() && lt > 5.4 ? 0 : 1, subAlpha: 1 - exK, dolphins: (portrait() ? 1 - seg(lt, 4.6, 5.2) : 1) * (1 - exK) }),
+    moves: leaps,
+    render(lt, dt) {
+      exK += ((expanded ? 1 : 0) - exK) * (1 - Math.exp(-(dt || 0) * 8));
+      const gk = E.outExpo(seg(lt, V + 0.66, V + 1.1)), out = E.inCubic(seg(lt, 4.4, 4.9));
+      T(lab, seg(lt, V, V + 0.3));
+      T(goal, seg(lt, V + 0.66, V + 0.78), 0, 0, RM ? 1 : lerp(1.2, 1, gk));
+      T(gl, seg(lt, V + 1.88, V + 2.2), 0, (1 - E.outCubic(seg(lt, V + 1.88, V + 2.3))) * 16);
+      T(intro, 1 - out, 0, -out * 24);
+      intro.hidden = out >= 1;
+      T(hud, E.outCubic(seg(lt, 4.8, 5.3)), 0, (1 - E.outCubic(seg(lt, 4.8, 5.3))) * -8);
+      more.style.opacity = seg(lt, ASSEMBLED, ASSEMBLED + 0.3).toFixed(3);
+      more.style.pointerEvents = lt >= ASSEMBLED ? '' : 'none';
+      seq.forEach((e, i) => {
+        if (e.classList.contains('landed')) return;
+        const a = A0 + i * STEP, q = E.outCubic(seg(lt, a, a + FLY)), sl = slots[i];
+        if (q >= 1) { e.style.transform = ''; e.style.opacity = ''; e.classList.add('landed'); return; }
+        if (!sl) return;
+        if (RM) { T(e, seg(lt, a, a + FLY)); return; }
+        T(e, seg(lt, a, a + 0.2), 0, (1 - q) * 48, lerp(0.96, 1, q));
+      });
+      if (tween) {
+        const k = seg(performance.now(), tween.t0, tween.t0 + 1000);
+        shownScore = Math.round(lerp(tween.from, tween.to, E.outCubic(k)));
+        setPlain(tsc, String(shownScore));
+        if (k >= 1) tween = null;
+      }
+    },
+    cues: [
+      [0.001, () => sfx('whoosh')],
+      [V, () => say(`Goal: ${spoken(D.st.goalScore)}. ${D.gap} points to go.`)],
+      [V + 0.66, () => sfx('intro')],
+      [4.4, () => sfx('whoosh')],
+      ...seq.map((e, i) => [A0 + i * STEP + FLY * 0.55, () => sfx('step')]),
+    ],
+    onOpen(n) {
+      for (const b of buttons()) b.classList.toggle('sel', b._l === n);
+      placeCard(n);
+      cardWasOpen = true;
+    },
+    onClose() {
+      for (const b of buttons()) b.classList.remove('sel');
+      cardWasOpen = false;
+      lay.dataset.lift = '0'; lay.style.transform = '';
+    },
+    onComplete(evt) {
+      const d = evt.lesson.domain;
+      const el = [...buttons()].find((b) => b._l === evt.lesson);
+      if (el) {
+        el.classList.add('done');
+        if (el.classList.contains('rec')) {
+          el.querySelector('.go').innerHTML = `${CHECK}Done`;
+          el.classList.remove('won-anim'); void el.offsetWidth; el.classList.add('won-anim');
+        } else el.querySelector('em').innerHTML = CHECK;
+        const r = el.getBoundingClientRect();
+        for (let i = 0; i < 18; i++) bubble(r.left + Math.random() * r.width, r.top + 4 + Math.random() * 12, 2 + Math.random() * 4);
+      }
+      evt.unlocked.forEach((l) => fresh.add(l));
+      const from = shownScore, to = evt.stats.score;
+      tween = { from, to, t0: performance.now() };
+      setBar(to);
+      if (to > from) { tplus.textContent = `+${to - from}`; tplus.classList.remove('go'); void tplus.offsetWidth; tplus.classList.add('go'); }
+      bumpUntil = clock + 3;
+      // After the beat, the column shows its next rung.
+      setTimeout(() => {
+        if (!cols.has(d) || !grid.isConnected) return;
+        renderCol(d, true);
+        const nr = cols.get(d).rec;
+        if (nr) {
+          nr.classList.add('fresh');
+          if (fresh.has(nr._l)) { sfx('unlock'); const r = nr.getBoundingClientRect(); for (let i = 0; i < 10; i++) bubble(r.left + Math.random() * r.width, r.top + 6, 1.5 + Math.random() * 3); }
+        }
+        updMore(); syncScroll();
+        if (lessonCard.lesson) for (const b of buttons()) b.classList.toggle('sel', b._l === lessonCard.lesson);
+      }, 1500);
+    },
+  };
+}
+
+// ═════════════════════ PLAYER ═════════════════════
+const SC = [
+  { name: 'Day 1', dur: 7.4, make: sceneOpen },
+  { name: 'The climb', dur: 15.8, make: sceneMontage },
+  { name: 'Chapters', dur: 8, make: sceneChapters },
+  { name: 'The struggle', dur: 8, make: sceneStruggle },
+  { name: 'The score', dur: 9, make: sceneBuild },
+  { name: 'Your move', dur: 7, make: sceneTurn },
+];
+let acc = 0;
+for (const s of SC) { s.start = acc; acc += s.dur; }
+const TOTAL = acc;
+const at = (i, lt) => SC[i].start + lt;
+// Depth of the camera (0 surface … 1 abyss): deep on Day 1, rising with the montage and the score, a small
+// sink in the struggle, the surface in sight for the goal, then just below it for the final choice.
+CAM = [[0, 0.86], [at(1, 0), 0.85], [at(1, 1.6), 0.85], [at(1, 10.6), 0.63], [at(2, 0), 0.6], [at(3, 0), 0.5], [at(3, 2), 0.535], [at(4, 0), 0.55],
+  [at(4, 0.8), 0.55], [at(4, 6), 0.32], [at(5, 0), 0.31], [at(5, 0.8), 0.13], [at(5, 1.8), 0.095], [at(5, 4.4), 0.095], [at(5, 5.4), 0.155]];
+// Sub screen position (x, y as fractions) + scale: glides in on Day 1, holds its mark, then settles low-left.
+SUBL = [[0, -0.2, 0.75, 1], [at(0, 3.2), 0.2, 0.74, 1], [at(5, 4.4), 0.2, 0.74, 1], [at(5, 5.4), 0.1, 0.8, 0.78]];
+SUBP = [[0, -0.4, 0.8, 1], [at(0, 3.2), 0.5, 0.8, 1], [at(5, 4.4), 0.5, 0.8, 1], [at(5, 5.4), 0.5, 1.3, 1]];
+CUTS = [...SC.slice(1).map((s) => s.start), ...[1, 2, 3].map((k) => at(2, k * 2))];
+
+let t = 0, playing = false, ended = false, begun = false, idx = -1, inst = null, prevLt = 0, clock = 0, bumpUntil = 0;
+
+const sceneAt = (tt) => { for (let i = SC.length - 1; i >= 0; i--) if (tt >= SC[i].start) return i; return 0; };
+function mount(i) {
+  if (lessonCard.lesson) { silentClose = true; lessonCard.close(); silentClose = false; }
+  stage.replaceChildren();
+  const root = add(stage, 'scene');
+  idx = i; inst = SC[i].make(root, storyData());
+  setLB(inst.fx ? (inst.fx(0).lb ?? 1) : 1);
+  inst.measure?.();
+}
+/** Jump to a global time. `fire` lets cues exactly at the landing point play (scene starts). */
+function seek(nt, fire = true) {
+  t = clamp(nt, 0, TOTAL); ended = t >= TOTAL;
+  hushVoice();
+  const i = sceneAt(t);
+  if (i !== idx) mount(i);
+  const lt = t - SC[i].start;
+  prevLt = fire ? lt - 1e-4 : lt;
+  cam = camPrev = camAt(t);
+  render();
+}
+const next = () => { if (ended) return; const i = sceneAt(t); seek(i < SC.length - 1 ? SC[i + 1].start : TOTAL); playing = true; };
+const prev = () => { const i = sceneAt(t), lt = t - SC[i].start; seek(lt > 1.2 || i === 0 ? SC[i].start : SC[i - 1].start); playing = true; };
+const skip = () => { const s6 = SC[SC.length - 1]; seek(t < s6.start + 4.4 ? s6.start + 4.4 : TOTAL); playing = true; };
+
+// Letterbox
+let lbPx = -1;
+function setLB(v) {
+  const px = Math.round(clamp(H * 0.11, 96, 124) * clamp(v, 0, 1));
+  if (px !== lbPx) { lbPx = px; document.documentElement.style.setProperty('--lb', px + 'px'); }
+}
+
+// Scrubber
+const PAUSE = '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="4" width="5" height="16" rx="1.5"/><rect x="14" y="4" width="5" height="16" rx="1.5"/></svg>';
+const PLAY = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15a1 1 0 0 0 1.5.86l12-7.5a1 1 0 0 0 0-1.72l-12-7.5A1 1 0 0 0 7 4.5z"/></svg>';
+const sbar = add(document.body, 'os-bar', `<button class="os-btn os-play" aria-label="Pause">${PAUSE}</button>
+  <div class="os-track" role="slider" tabindex="0" aria-label="Trailer timeline" aria-valuemin="0" aria-valuemax="${TOTAL}"><div class="os-fill"></div>
+  ${SC.slice(1).map((s) => `<i class="os-tick" style="left:${((s.start / TOTAL) * 100).toFixed(2)}%"></i>`).join('')}<div class="os-head"></div></div>
+  <span class="os-label"></span><button class="os-btn os-skip" title="Jump to the end (Space and arrow keys move scene by scene)">Skip</button>`);
+const sPlay = $('.os-play', sbar), sTrack = $('.os-track', sbar), sFill = $('.os-fill', sbar), sHead = $('.os-head', sbar), sLabel = $('.os-label', sbar), sSkip = $('.os-skip', sbar);
+let hoverName = null, dragging = false, uiState = '';
+const tAtX = (x) => { const r = sTrack.getBoundingClientRect(); return clamp((x - r.left) / r.width, 0, 1) * TOTAL; };
+sTrack.addEventListener('pointerdown', (e) => { if (!begun) return; dragging = true; sTrack.setPointerCapture(e.pointerId); seek(tAtX(e.clientX), false); });
+sTrack.addEventListener('pointermove', (e) => { const tt = tAtX(e.clientX); if (dragging) seek(tt, false); hoverName = SC[sceneAt(tt)].name; updateScrubber(); });
+sTrack.addEventListener('pointerup', () => { dragging = false; });
+sTrack.addEventListener('pointerleave', () => { hoverName = null; updateScrubber(); });
+sTrack.addEventListener('keydown', (e) => {
+  if (e.key === 'Home') { e.preventDefault(); seek(0); playing = true; }
+  else if (e.key === 'End') { e.preventDefault(); seek(TOTAL); }
+});
+sPlay.addEventListener('click', () => { if (ended) return; playing = !playing; if (!playing) hushVoice(); sPlay.blur(); updateScrubber(); });
+sSkip.addEventListener('click', () => { if (ended) { seek(0); playing = true; } else skip(); sSkip.blur(); updateScrubber(); });
+function updateScrubber() {
+  const k = t / TOTAL;
+  sFill.style.width = (k * 100).toFixed(2) + '%';
+  sHead.style.left = (k * 100).toFixed(2) + '%';
+  sTrack.setAttribute('aria-valuenow', t.toFixed(1));
+  const label = hoverName || SC[idx].name;
+  const st = `${label}|${ended}|${playing}`;
+  if (st === uiState) return;
+  uiState = st;
+  sLabel.textContent = label;
+  sSkip.textContent = ended ? 'Replay' : 'Skip';
+  sbar.classList.toggle('ended', ended);
+  sPlay.innerHTML = playing && !ended ? PAUSE : PLAY;
+  sPlay.setAttribute('aria-label', playing && !ended ? 'Pause' : 'Play');
+  sPlay.disabled = ended;
+  sPlay.style.visibility = ended ? 'hidden' : '';
+}
+
+addEventListener('keydown', (e) => {
+  if (!begun || e.metaKey || e.ctrlKey || e.altKey) return;
+  const tag = e.target && e.target.tagName;
+  if (e.key === ' ' || e.code === 'Space') {
+    if (tag === 'BUTTON' || tag === 'A' || tag === 'INPUT') return;
+    e.preventDefault(); next();
+  } else if (e.key === 'ArrowRight') { e.preventDefault(); next(); }
+  else if (e.key === 'ArrowLeft') { e.preventDefault(); prev(); }
+});
+let resizeRaf = 0;
+addEventListener('resize', () => {
+  cancelAnimationFrame(resizeRaf);
+  resizeRaf = requestAnimationFrame(() => { resize(); setLB(inst?.fx ? inst.fx(t - SC[idx].start).lb ?? 1 : 1); inst?.measure?.(); });
+});
+
+// Main loop
+const PERF = params.has('perf') ? (window.__perf = { work: [], gap: [] }) : null;
+let last = performance.now();
+/** Render the current time: cues, scene, ocean, camera. Called every frame and right after a seek. */
+function render(dt = 0) {
+  const i = sceneAt(t);
+  if (i !== idx) { mount(i); prevLt = -1e-4; }
+  const lt = t - SC[i].start;
+  if (lt > prevLt) for (const [ct, fn] of inst.cues || []) if (ct > prevLt && ct <= lt) fn();
+  prevLt = lt;
+  inst.render(lt, dt);
+  const P = inst.fx ? inst.fx(lt) : {};
+  if (begun) { const [v, r] = bumpUntil > clock ? [0.9, 0.5] : inst.music(lt); score.setIntensity(v, r); }
+  setLB(P.lb ?? 1);
+  drawWorld(dt, P, lt);
+  const amp = RM ? 0 : FX.shake + (P.baseShake || 0);
+  const z = RM ? 1 : P.zoom || 1;
+  world.style.transform = amp > 0.15 || z !== 1
+    ? `translate3d(${((Math.random() * 2 - 1) * amp).toFixed(1)}px, ${((Math.random() * 2 - 1) * amp).toFixed(1)}px, 0) scale(${(z * (amp > 0.15 ? 1.012 : 1)).toFixed(4)})`
+    : '';
+  flashEl.style.opacity = FX.flash > 0.004 ? FX.flash.toFixed(3) : '0';
+  updateScrubber();
+}
+function frame(now) {
+  const t0 = performance.now();
+  const dt = Math.min(0.05, Math.max(0, (now - last) / 1000));
+  if (PERF) PERF.gap.push(now - last);
+  last = now; clock += dt;
+  if (playing && !ended) { t += dt; if (t >= TOTAL) { t = TOTAL; ended = true; } }
+  FX.shake *= Math.exp(-dt * 6);
+  FX.flash *= Math.exp(-dt * 4);
+  render(dt);
+  if (PERF) PERF.work.push(performance.now() - t0);
+  requestAnimationFrame(frame);
+}
+mount(0);
+requestAnimationFrame(frame);
+document.fonts?.ready.then(() => inst?.measure?.());
+
+function start() {
+  if (begun) return;
+  begun = true;
+  sbar.classList.add('on');
+  const sc = parseInt(params.get('scene'), 10), tp = parseFloat(params.get('t'));
+  const demo = params.get('demo') === 'complete';
+  let t0 = 0;
+  if (sc >= 1 && sc <= SC.length) t0 = SC[sc - 1].start + (Number.isFinite(tp) ? tp : 0);
+  else if (Number.isFinite(tp)) t0 = tp;
+  else if (demo) t0 = TOTAL;
+  seek(t0);
+  playing = true;
+  if (demo) {
+    const wait = () => {
+      if (!ended) return setTimeout(wait, 150);
+      // A recommended lesson that moves the score and opens the next rung, so the demo shows both.
+      const recs = graph.domains.map((d) => frontierOf(d)[0]).filter(Boolean);
+      const l = recs.find((x) => x.progress === 0 && x.parent.children[x.rung + 1]) || recs[0];
+      lessonCard.open(l);
+      setTimeout(() => lessonCard.el.querySelector('.actions .kg-btn.primary')?.click(), 450);
+    };
+    setTimeout(wait, 250);
+  }
+}
+</script>
+</body>
+</html>

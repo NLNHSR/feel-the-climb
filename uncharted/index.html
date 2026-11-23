@@ -1,0 +1,1403 @@
+<!doctype html>
+<!--
+  Sound design (Uncharted)
+  Music: adventurous, oceanic, curious. Low strings and a soft pulse of hand percussion under a
+  warm pad; calm and spacious over explored water, lifting as the cursor explores the cloud edge,
+  swelling to a full, bright section when clouds part (intro and every completion).
+  Events (score.sfx):
+    hover    - soft water droplet (cursor finds a beacon or an island)
+    select   - wooden map-pin tap (a beacon opens its lesson card)
+    back     - low, short paper fold (Esc / "Whole chart" / closing the card)
+    zoomIn   - gentle sail filling with wind, rising
+    zoomOut  - the same breath of wind, falling away
+    peek     - airy shimmer, like mist thinning (clouds first thin under the cursor)
+    step     - oar dip / hull creak (the boat sets off or arrives at a harbour)
+    start    - rope pulled taut, short rising strings (lesson begins)
+    complete - rushing wind + reveal swell (clouds part over newly explored land)
+    unlock   - distant lighthouse bell (a new beacon tower lights)
+    riser    - rolling timpani + string tremolo, building (intro: the cloud cover gathers)
+    intro    - deep horn + full-orchestra hit, then wind (intro: the clouds burst open)
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Uncharted Sea Chart</title>
+<link rel="icon" href="data:," />
+<link rel="stylesheet" href="../shared/dolphin.css" />
+<style>
+  :root { color-scheme: light; --space: 8px; --ease: cubic-bezier(.2,.8,.2,1); }
+  html, body { overflow: hidden; background: #2F9AE6; }
+  body { color: var(--ink); }
+  #chart { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+
+  /* Type scale: 20 / 15 / 12. Spacing on an 8px grid. */
+  .hud { position: fixed; top: 16px; left: 16px; z-index: 20; display: grid; gap: var(--space); justify-items: start; pointer-events: none;
+    transition: opacity 600ms var(--ease); }
+  body.intro-hud .hud { opacity: 0; }
+
+  /* Explored → projected score → goal, in one element. */
+  .score { width: 304px; box-sizing: border-box; background: var(--foam); border: 1px solid var(--mist); border-radius: 16px; padding: 12px 16px 8px;
+    box-shadow: 0 2px 0 var(--chrome-shadow); }
+  .score .row { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .score .explored { font-family: var(--font-head); font-size: 15px; line-height: 20px; white-space: nowrap; }
+  .score .explored b { font-weight: normal; color: var(--wave-shadow); }
+  .score .goal-l { font-size: 12px; line-height: 16px; font-weight: 700; color: var(--muted); white-space: nowrap; }
+  .track { position: relative; height: 24px; margin-top: 8px; }
+  .track .rail { position: absolute; left: 0; right: 0; top: 9px; height: 6px; border-radius: 3px; background: var(--paper); }
+  .track .fill { position: absolute; left: 0; top: 9px; height: 6px; border-radius: 3px; background: var(--wave-3); width: 0;
+    transition: width 900ms var(--ease); }
+  .track .gap { position: absolute; top: 11px; height: 0; border-top: 2px dashed var(--cloud); transition: left 900ms var(--ease), width 900ms var(--ease); }
+  .track .you { position: absolute; top: 4px; width: 16px; height: 16px; margin-left: -8px; box-sizing: border-box; border-radius: 50%;
+    background: var(--foam); border: 3px solid var(--wave-shadow); transition: left 900ms var(--ease); }
+  .track .flag { position: absolute; top: -4px; width: 14px; height: 24px; margin-left: -1px; }
+  .labels { position: relative; height: 16px; margin-top: 2px; font-size: 12px; line-height: 16px; font-weight: 700; color: var(--muted); }
+  .labels span { position: absolute; top: 0; white-space: nowrap; transition: left 900ms var(--ease); }
+  .labels .you-l { color: var(--ink); }
+  .labels .togo { color: var(--wave-shadow); }
+
+  .back { pointer-events: auto; font: 700 12px/16px var(--font-body); color: var(--ink); background: var(--foam); border: 1px solid var(--mist);
+    border-radius: 999px; padding: 8px 16px; cursor: pointer; box-shadow: 0 2px 0 var(--chrome-shadow);
+    opacity: 0; visibility: hidden; transform: translateY(-4px); transition: opacity 200ms ease-out, transform 240ms var(--ease), visibility 200ms; }
+  .back.show { opacity: 1; visibility: visible; transform: none; }
+  .back:hover { background: var(--paper); }
+  .back:focus-visible { outline: 3px solid rgba(47, 154, 230, .45); outline-offset: 2px; }
+
+  .hint { position: fixed; top: 16px; left: 50%; transform: translate(-50%, -4px); z-index: 20; pointer-events: none; white-space: nowrap;
+    font-size: 12px; line-height: 16px; font-weight: 700; color: var(--ink); background: var(--foam); border: 1px solid var(--mist);
+    border-radius: 999px; padding: 8px 16px; box-shadow: 0 2px 0 var(--chrome-shadow); opacity: 0; transition: opacity 400ms ease-out, transform 400ms var(--ease); }
+  .hint.show { opacity: 1; transform: translate(-50%, 0); }
+
+  .teaser { position: fixed; left: 0; top: 0; z-index: 25; pointer-events: none; max-width: 240px; padding: 8px 16px; border-radius: 16px;
+    background: var(--night-deep); color: var(--foam); opacity: 0; transform: translateY(4px); transition: opacity 180ms ease-out, transform 220ms var(--ease); }
+  .teaser.show { opacity: 1; transform: none; }
+  .teaser b { display: block; font-family: var(--font-head); font-weight: normal; font-size: 20px; line-height: 24px; }
+  .teaser span { display: block; font-size: 12px; line-height: 16px; font-weight: 700; color: var(--mist); }
+
+  @media (max-width: 1100px) { .hint { top: auto; bottom: 72px; } }
+  @media (max-width: 640px) {
+    .hud { top: 8px; left: 8px; }
+    .score { width: min(304px, calc(100vw - 16px)); }
+    .hint { white-space: normal; width: max-content; max-width: calc(100vw - 32px); text-align: center; }
+  }
+  @media (prefers-reduced-motion: reduce) { .hud, .teaser, .hint, .back, .track *, .labels span { transition: none; } }
+</style>
+</head>
+<body class="intro-hud">
+<canvas id="chart" role="img" aria-label="An isometric sea chart of your SAT knowledge. Islands are subjects; flags are lessons you have mastered and glowing beacon towers are lessons you are ready for. Clouds cover what you have not explored yet."></canvas>
+
+<header class="hud">
+  <section class="score" aria-live="polite">
+    <div class="row"><div class="explored">Explored <b id="hExp">0%</b> of the map</div><div class="goal-l" id="hGoal">Goal · 1500</div></div>
+    <div class="track" aria-hidden="true">
+      <div class="rail"></div><div class="fill" id="hFill"></div><div class="gap" id="hGap"></div>
+      <svg class="flag" id="hFlag" viewBox="0 0 14 24"><path d="M1.5 23V2" stroke="#0A234F" stroke-width="2" stroke-linecap="round"/><path d="M2.5 2.5h9.5l-2.6 3.6 2.6 3.6H2.5z" fill="#FFF44E" stroke="#E8BE00" stroke-width="1.2" stroke-linejoin="round"/></svg>
+      <div class="you" id="hYou"></div>
+    </div>
+    <div class="labels" aria-hidden="true"><span class="you-l" id="hYouL">You · 400</span><span class="togo" id="hToGo">1100 to go</span></div>
+  </section>
+  <button class="back" id="back" type="button">← Whole chart</button>
+</header>
+<div class="hint" id="hint">Glide toward an island to sail in. Hover the clouds to peek.</div>
+<div class="teaser" id="teaser" aria-live="polite"><b></b><span></span></div>
+
+<script type="module">
+import { createGraph, DOMAIN_HUES, pct, clamp, projectedScore } from '../shared/graph.js';
+import { mountChrome, params } from '../shared/chrome.js';
+import { createLessonCard } from '../shared/lesson-card.js';
+
+// ───────────────────────── Basics ─────────────────────────
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const TAU = Math.PI * 2;
+const lerp = (a, b, t) => a + (b - a) * t;
+const sstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+const easeOutCubic = (u) => 1 - Math.pow(1 - u, 3);
+const easeInCubic = (u) => u * u * u;
+const easeInOutSine = (u) => -(Math.cos(Math.PI * u) - 1) / 2;
+const easeOutBack = (u) => { const c1 = 1.6, c3 = c1 + 1; return 1 + c3 * Math.pow(u - 1, 3) + c1 * Math.pow(u - 1, 2); };
+function mulberry32(a) {
+  return () => { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+}
+const C = {
+  sky: '#CFEFFF', ink: '#0A234F', muted: '#536A86', foam: '#FFFFFC', paper: '#F0F2F5', mist: '#D9E4F2', cloud: '#B7C0CC',
+  w1: '#9EDFFF', w2: '#5FC6F7', w3: '#2F9AE6', wsh: '#1E6FBE', night: '#103B84', nightDeep: '#0A2B64', sun: '#FFF44E', sunSh: '#E8BE00', success: '#3FA669',
+};
+const hexRgb = (h) => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+const toHex = (rgb) => '#' + rgb.map((v) => clamp(Math.round(v), 0, 255).toString(16).padStart(2, '0')).join('');
+const mixHex = (a, b, t) => { const A = hexRgb(a), B = hexRgb(b); return toHex(A.map((v, i) => v + (B[i] - v) * t)); };
+const rgba = (h, a) => { const [r, g, b] = hexRgb(h); return `rgba(${r},${g},${b},${a})`; };
+// Terrain palette, all derived from Dolphin tokens.
+const SAND = mixHex(C.foam, C.sunSh, 0.2);
+const SAND_SIDE = [0.42, 0.34, 0.26, 0.2].map((t) => mixHex(SAND, C.muted, t));
+const GRASS = mixHex(C.success, C.foam, 0.5);
+const PLATEAU = mixHex(C.success, C.foam, 0.36);
+const CLIFF = [0.62, 0.52, 0.42, 0.34].map((t) => mixHex(mixHex(SAND, C.success, 0.25), C.ink, t * 0.55));
+const GHOST_TOP = mixHex(C.foam, C.mist, 0.7);
+const GHOST_SIDE = [0.5, 0.42, 0.34, 0.28].map((t) => mixHex(C.mist, C.muted, t * 0.7));
+const TREE = mixHex(C.success, C.ink, 0.18), TREE_LIT = mixHex(C.success, C.foam, 0.25);
+const HEAD = '"VAG Rundschrift D", "Manrope", system-ui, sans-serif';
+const BODY = '"Manrope", system-ui, sans-serif';
+const Q = {
+  demo: params.get('demo') || '', intro: params.get('intro'),
+  px: params.get('px'), py: params.get('py'),
+  d: params.has('d') ? +params.get('d') : null, cd: parseFloat(params.get('cd') || '1.2'), lesson: params.get('lesson'),
+  t: parseFloat(params.get('t') || '0') || 0,
+};
+
+// ───────────────────────── Graph ─────────────────────────
+const graph = createGraph();
+const { domains, leaves } = graph;
+const leavesOf = (n) => (n.children.length ? n.children.flatMap(leavesOf) : [n]);
+
+// ───────────────────────── Projection ─────────────────────────
+// True 2:1 isometric: the chart is laid out on a ground plane rotated 45° to the viewer, which works
+// out to x' = x, y' = y/2 − height. Everything below is drawn in these projected units.
+const K = 0.5;
+const H_SAND = 7, H_GRASS = 24, H_PLAT = 42, H_CLOUD = 52;
+const PUFF_W = 270, PUFF_H = 177; // projected size of one cloud puff (before its own scale)
+const py = (y, h = 0) => y * K - h;
+
+// ───────────────────────── Canvas + sprites ─────────────────────────
+const cv = document.getElementById('chart');
+const ctx = cv.getContext('2d');
+const landCv = document.createElement('canvas'), lctx = landCv.getContext('2d');
+let W = 0, H = 0, DPR = 1;
+function sprite(size, stops) {
+  const c = document.createElement('canvas'); c.width = c.height = size;
+  const g = c.getContext('2d'), gr = g.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  for (const [o, col] of stops) gr.addColorStop(o, col);
+  g.fillStyle = gr; g.fillRect(0, 0, size, size);
+  return c;
+}
+const GLOW = sprite(128, [[0, 'rgba(255,248,140,0.9)'], [0.25, 'rgba(255,244,78,0.45)'], [0.6, 'rgba(255,244,78,0.12)'], [1, 'rgba(255,244,78,0)']]);
+// Cartoon cloud puffs: a cauliflower of circles, lit from above, cool shade on the underside.
+const CLOUD_W = 320, CLOUD_H = 210;
+const CLOUDS = [11, 23, 37, 41].map((seed) => {
+  const rnd = mulberry32(seed), c = document.createElement('canvas'); c.width = CLOUD_W; c.height = CLOUD_H;
+  const g = c.getContext('2d'), circles = [];
+  const base = 150;
+  for (let i = 0; i < 4; i++) circles.push([62 + i * 64 + (rnd() - 0.5) * 14, base - rnd() * 10, 44 + rnd() * 12]);
+  for (let i = 0; i < 3; i++) circles.push([98 + i * 62 + (rnd() - 0.5) * 16, base - 52 - rnd() * 14, 48 + rnd() * 14]);
+  circles.push([150 + (rnd() - 0.5) * 30, base - 92 - rnd() * 8, 40 + rnd() * 10]);
+  const path = new Path2D();
+  for (const [x, y, r] of circles) { path.moveTo(x + r, y); path.arc(x, y, r, 0, TAU); }
+  g.save(); g.shadowColor = 'rgba(16,59,132,0.22)'; g.shadowBlur = 18; g.shadowOffsetY = 10; g.fillStyle = '#E6EFF8'; g.fill(path); g.restore();
+  const gr = g.createLinearGradient(0, 30, 0, 200);
+  gr.addColorStop(0, '#FFFFFF'); gr.addColorStop(0.5, '#F6F9FD'); gr.addColorStop(1, '#BBD0E6');
+  g.fillStyle = gr; g.fill(path);
+  g.save(); g.clip(path); g.fillStyle = 'rgba(255,255,255,0.85)';
+  for (const [x, y, r] of circles) { g.beginPath(); g.arc(x - r * 0.12, y - r * 0.24, r * 0.72, 0, TAU); g.fill(); }
+  g.restore();
+  return c;
+});
+
+// ───────────────────────── Chart layout ─────────────────────────
+const islands = [], lobes = [], marks = [], markOf = new Map(), trees = [], sparkles = [], puffs = [];
+let worldBox = null, chartBox = null, portrait = null, layoutVersion = 0;
+const home = { rx: 520, ry: 520 };
+const ZIG = [1, -1, -1, 1, -1];
+const N_POLY = 120;
+function lobeR(l, th) {
+  const k = l.k;
+  return l.R * (1 + k[0] * Math.sin(2 * th + k[1]) + k[2] * Math.sin(3 * th + k[3]) + k[4] * Math.sin(5 * th + k[5]) + k[6] * Math.sin(7 * th + k[7]));
+}
+function lobeGap(l, x, y, off = 0) { const dx = x - l.cx, dy = y - l.cy; return Math.hypot(dx, dy) - lobeR(l, Math.atan2(dy, dx)) - off; }
+function islandGap(isl, x, y) { let g = Infinity; for (const l of isl.lobes) { const v = lobeGap(l, x, y); if (v < g) g = v; } return g; }
+function landGap(x, y) { let g = Infinity; for (const l of lobes) { const v = lobeGap(l, x, y); if (v < g) g = v; } return g; }
+const inPlateau = (l, x, y) => { const dx = x - l.cx, dy = y - l.cy; return Math.hypot(dx, dy) < 0.5 * lobeR(l, Math.atan2(dy, dx)); };
+function lobePts(l, off, scale = 1) {
+  const pts = [];
+  for (let k = 0; k < N_POLY; k++) { const th = (k / N_POLY) * TAU, r = lobeR(l, th) * scale + off; pts.push([l.cx + Math.cos(th) * r, l.cy + Math.sin(th) * r]); }
+  return pts;
+}
+function polyP(p, pts, h, closed = true) {
+  p.moveTo(pts[0][0], py(pts[0][1], h));
+  for (let i = 1; i < pts.length; i++) p.lineTo(pts[i][0], py(pts[i][1], h));
+  if (closed) p.closePath();
+}
+function toRuns(pts, keep) {
+  const N = pts.length, runs = [];
+  if (keep.every(Boolean)) return [{ closed: true, pts }];
+  for (let k = 0; k < N; k++) {
+    if (keep[k] && !keep[(k - 1 + N) % N]) {
+      const run = [pts[(k - 1 + N) % N]];
+      let j = k;
+      while (keep[j % N] && run.length <= N) { run.push(pts[j % N]); j++; }
+      run.push(pts[j % N]);
+      runs.push({ closed: false, pts: run });
+    }
+  }
+  return runs;
+}
+/** Outline of an island's union of hills at `off` map units out, as runs belonging to each hill. */
+function unionRuns(isl, off) {
+  return isl.lobes.map((l) => {
+    const pts = lobePts(l, off);
+    const keep = pts.map(([x, y]) => !isl.lobes.some((o) => o !== l && lobeGap(o, x, y, off) < -0.5));
+    return { lobe: l, runs: toRuns(pts, keep) };
+  });
+}
+function runsPathP(list, h, filter = () => true) {
+  const p = new Path2D();
+  for (const { lobe, runs } of list) if (filter(lobe)) for (const r of runs) polyP(p, r.pts, h, r.closed);
+  return p;
+}
+/** Vertical side faces (front-facing only), bucketed by how much light they catch. */
+const LIGHT = (() => { const l = Math.hypot(-0.75, 0.66); return [-0.75 / l, 0.66 / l]; })();
+function sideFaces(segs, h0, h1) {
+  const b = [new Path2D(), new Path2D(), new Path2D(), new Path2D()];
+  for (const { pts, cx, cy, closed } of segs) {
+    const n = pts.length, last = closed ? n : n - 1;
+    for (let i = 0; i < last; i++) {
+      const a = pts[i], c = pts[(i + 1) % n];
+      let nx = c[1] - a[1], ny = -(c[0] - a[0]);
+      const len = Math.hypot(nx, ny) || 1; nx /= len; ny /= len;
+      if (nx * ((a[0] + c[0]) / 2 - cx) + ny * ((a[1] + c[1]) / 2 - cy) < 0) { nx = -nx; ny = -ny; }
+      if (ny < -0.05) continue; // faces away from the viewer: hidden behind the top
+      const lit = clamp(0.5 + 0.5 * (nx * LIGHT[0] + ny * LIGHT[1]), 0, 0.999);
+      const p = b[Math.floor(lit * 4)];
+      p.moveTo(a[0], py(a[1], h0)); p.lineTo(c[0], py(c[1], h0)); p.lineTo(c[0], py(c[1], h1)); p.lineTo(a[0], py(a[1], h1)); p.closePath();
+    }
+  }
+  return b;
+}
+
+function layout() {
+  portrait = H > W * 1.05;
+  islands.length = lobes.length = marks.length = trees.length = sparkles.length = puffs.length = 0; markOf.clear();
+  const rnd = mulberry32(11);
+  const ANG = [176, 238, 300, 6, 98].map((a) => (a * Math.PI) / 180);
+  // Landscape: a ring of islands with arms reaching out. Portrait: the ring is tall and the arms lean up or down.
+  const RX = portrait ? 330 : 540, RY = portrait ? 900 : 540;
+  const ARM_P = [[-0.5, 1], [-0.45, -1], [0.45, -1], [0.5, 1], [0, 1]];
+  home.rx = RX * 0.92; home.ry = RY * 0.92;
+  domains.forEach((d, di) => {
+    const a = ANG[di];
+    let [ux, uy] = portrait ? ARM_P[di] : [Math.cos(a), Math.sin(a)];
+    const ul = Math.hypot(ux, uy); ux /= ul; uy /= ul;
+    const isl = { d, di, hue: DOMAIN_HUES[d.label], lobes: [], ux, uy };
+    let prev = null;
+    d.children.forEach((t, ti) => {
+      const n = t.leafCount, R = 34 * Math.sqrt(n) + 54;
+      let cx = Math.cos(a) * RX, cy = Math.sin(a) * RY;
+      if (prev) {
+        const rot = ZIG[di] * (ti % 2 ? 1 : -1) * 0.68;
+        const dx = ux * Math.cos(rot) - uy * Math.sin(rot), dy = ux * Math.sin(rot) + uy * Math.cos(rot), dist = 0.78 * (prev.R + R);
+        cx = prev.cx + dx * dist; cy = prev.cy + dy * dist;
+      }
+      const k = [0.07 + rnd() * 0.04, rnd() * TAU, 0.045 + rnd() * 0.03, rnd() * TAU, 0.025 + rnd() * 0.02, rnd() * TAU, 0.012 + rnd() * 0.01, rnd() * TAU];
+      const l = { topic: t, isl, ti, cx, cy, R, k, prev, marks: [], solidT: t.unlocked ? 1 : 0, open: t.unlocked, pop: 0, fullRv: t.masteredCount === t.leafCount ? 1 : 0 };
+      isl.lobes.push(l); lobes.push(l); prev = l;
+    });
+    islands.push(isl);
+  });
+  for (const l of lobes) placeLessons(l);
+  for (const isl of islands) buildIsland(isl);
+  for (const l of lobes) l.harbor = harborFor(l);
+  islands.sort((a, b) => a.sortY - b.sortY);
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const l of lobes) { x0 = Math.min(x0, l.cx - l.R * 1.1); y0 = Math.min(y0, l.cy - l.R * 1.1); x1 = Math.max(x1, l.cx + l.R * 1.1); y1 = Math.max(y1, l.cy + l.R * 1.1); }
+  worldBox = projBox(x0 - 80, y0 - 80, x1 + 80, y1 + 80);
+  // Trees on every hill, clear of lessons and their paths.
+  const tr = mulberry32(9);
+  for (const l of lobes) {
+    const want = Math.round(2 + l.R / 45);
+    for (let tries = 0, got = 0; tries < 60 && got < want; tries++) {
+      const th = tr() * TAU, rr = (0.25 + tr() * 0.6) * l.R, x = l.cx + Math.cos(th) * rr, y = l.cy + Math.sin(th) * rr;
+      if (lobeGap(l, x, y) > -16 || l.isl.lobes.some((o) => o.ti > l.ti && lobeGap(o, x, y) < 6)) continue;
+      if (marks.some((m) => Math.hypot(m.x - x, m.y - y) < 30) || l.spiral.some((p) => Math.hypot(p[0] - x, p[1] - y) < 16)) continue;
+      if (trees.some((t) => Math.hypot(t.x - x, t.y - y) < 26)) continue;
+      trees.push({ x, y, h: inPlateau(l, x, y) ? H_PLAT : H_GRASS, s: 0.8 + tr() * 0.5, lobe: l, isl: l.isl }); got++;
+    }
+  }
+  // Sparkles on the water and the cloud cover.
+  const sr = mulberry32(5);
+  for (let i = 0; i < 260; i++) {
+    const x = (x0 - 400) + sr() * (x1 - x0 + 800), y = (y0 - 400) + sr() * (y1 - y0 + 800);
+    if (landGap(x, y) < 40) continue;
+    sparkles.push({ x, y, p: sr() * TAU, w: 0.8 + sr() * 1.4 });
+  }
+  const cr = mulberry32(3), SX = 150, SY = 118;
+  for (let y = y0 - 1700, row = 0; y < y1 + 1700; y += SY, row++) {
+    for (let x = x0 - 1100 + (row % 2) * SX * 0.5; x < x1 + 1100; x += SX) {
+      puffs.push({ x: x + (cr() - 0.5) * 60, y: y + (cr() - 0.5) * 40, v: Math.floor(cr() * CLOUDS.length), s: 0.85 + cr() * 0.4, ph: cr() * TAU, cov: 1, target: 1, part: null });
+    }
+  }
+  puffs.sort((a, b) => a.y - b.y);
+  rebuildStates();
+  layoutVersion++;
+}
+const projBox = (x0, y0, x1, y1) => ({ x0, x1, y0: py(y0, H_PLAT + 30), y1: py(y1, -10) });
+
+function placeLessons(l) {
+  const ls = leavesOf(l.topic), n = ls.length;
+  const ex = l.prev ? l.prev.cx - l.cx : -l.cx, ey = l.prev ? l.prev.cy - l.cy : -l.cy;
+  const th0 = Math.atan2(ey, ex), sign = (l.ti + l.isl.di) % 2 ? -1 : 1;
+  const sweep = Math.min(TAU * 0.9, Math.PI * (0.78 + 0.14 * n));
+  const later = l.isl.lobes.filter((o) => o.ti > l.ti);
+  const S = 160;
+  let pts, idx;
+  for (let outer = 0.66; outer > 0.3; outer -= 0.04) {
+    pts = []; const cum = [0];
+    for (let i = 0; i <= S; i++) {
+      const t = i / S, th = th0 + sign * sweep * t, rr = lobeR(l, th) * (outer - (outer - 0.14) * t);
+      pts.push([l.cx + Math.cos(th) * rr, l.cy + Math.sin(th) * rr]);
+      if (i) cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+    }
+    const L = cum[S];
+    idx = ls.map((_, i) => { const target = n > 1 ? (L * i) / (n - 1) : L * 0.55; let k = 0; while (k < S && cum[k] < target) k++; return k; });
+    if (idx.every((k) => later.every((o) => lobeGap(o, pts[k][0], pts[k][1]) > 12))) break;
+  }
+  l.spiral = pts;
+  ls.forEach((leaf, i) => {
+    const k = idx[i], x = pts[k][0], y = pts[k][1];
+    const m = { leaf, lobe: l, x, y, h: inPlateau(l, x, y) ? H_PLAT : H_GRASS, si: k, lit: 1, flare: 0, hover: 0, pop: 0, sx: 0, sy: 0, top: 0, r: 8 };
+    marks.push(m); markOf.set(leaf.id, m); l.marks.push(m);
+  });
+}
+
+function buildIsland(isl) {
+  const segsOf = (list) => list.flatMap(({ lobe, runs }) => runs.map((r) => ({ pts: r.pts, closed: r.closed, cx: lobe.cx, cy: lobe.cy, lobe })));
+  const compound = (off, h) => { const p = new Path2D(); for (const l of isl.lobes) polyP(p, lobePts(l, off), h); return p; };
+  isl.shallowFar = compound(54, 0); isl.shallowNear = compound(28, 0);
+  isl.foam = runsPathP(unionRuns(isl, 14), 0);
+  isl.ripple = runsPathP(unionRuns(isl, 30), 0);
+  const sandRuns = unionRuns(isl, 9);
+  isl.sandSide = sideFaces(segsOf(sandRuns), 0, H_SAND);
+  isl.sandTop = compound(9, H_SAND);
+  isl.grassRuns = unionRuns(isl, 0);
+  for (const l of isl.lobes) {
+    const own = isl.grassRuns.find((r) => r.lobe === l);
+    l.grassSide = sideFaces(segsOf([own]), H_SAND, H_GRASS);
+    l.top = new Path2D(); polyP(l.top, lobePts(l, 0), H_GRASS);
+    const plat = lobePts(l, 0, 0.5);
+    l.platSide = sideFaces([{ pts: plat, closed: true, cx: l.cx, cy: l.cy }], H_GRASS, H_PLAT);
+    l.platTop = new Path2D(); polyP(l.platTop, plat, H_PLAT);
+    l.platRim = new Path2D(); polyP(l.platRim, plat, H_PLAT);
+    // The path up the hill (mastered rungs), drawn on the terrain at the right height.
+    l.trailPts = l.spiral.map(([x, y]) => [x, py(y, inPlateau(l, x, y) ? H_PLAT : H_GRASS)]);
+  }
+  let y0 = Infinity, x0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const l of isl.lobes) { x0 = Math.min(x0, l.cx - l.R); y0 = Math.min(y0, l.cy - l.R); x1 = Math.max(x1, l.cx + l.R); y1 = Math.max(y1, l.cy + l.R); }
+  isl.box = projBox(x0 - 90, y0 - 90, x1 + 90, y1 + 90);
+  isl.sortY = y0;
+  isl.nameAt = { x: (x0 + x1) / 2, y: py(y0, H_PLAT) - 14 };
+  isl.rocks = [];
+  const rr = mulberry32(isl.di + 40);
+  for (let i = 0; i < 3; i++) {
+    const l = isl.lobes[Math.floor(rr() * isl.lobes.length)], th = Math.PI * (0.1 + rr() * 0.8);
+    const r = lobeR(l, th) + 5, x = l.cx + Math.cos(th) * r, y = l.cy + Math.sin(th) * r;
+    if (isl.lobes.some((o) => o !== l && lobeGap(o, x, y) < 0)) continue;
+    isl.rocks.push({ x, y, s: 0.8 + rr() * 0.6 });
+  }
+}
+
+/** Re-derive everything that depends on lesson states (after a completion). */
+function rebuildStates() {
+  for (const l of lobes) l.open = l.topic.unlocked;
+  for (const isl of islands) {
+    isl.trim = runsPathP(isl.grassRuns, H_GRASS, (l) => l.open);
+    isl.coastGhost = runsPathP(isl.grassRuns, H_GRASS, (l) => !l.open);
+  }
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const l of lobes) if (l.open) { x0 = Math.min(x0, l.cx - l.R); y0 = Math.min(y0, l.cy - l.R); x1 = Math.max(x1, l.cx + l.R); y1 = Math.max(y1, l.cy + l.R); }
+  chartBox = projBox(x0 - 50, y0 - 50, x1 + 50, y1 + 50);
+  for (const l of lobes) {
+    const tm = new Path2D(), tf = new Path2D();
+    for (let i = 0; i < l.marks.length - 1; i++) {
+      const a = l.marks[i], b = l.marks[i + 1];
+      if (a.leaf.parent !== b.leaf.parent || a.leaf.state !== 'mastered') continue;
+      const p = b.leaf.state === 'mastered' ? tm : b.leaf.state === 'frontier' ? tf : null;
+      if (!p) continue;
+      p.moveTo(l.trailPts[a.si][0], l.trailPts[a.si][1]);
+      for (let k = a.si + 1; k <= b.si; k++) p.lineTo(l.trailPts[k][0], l.trailPts[k][1]);
+    }
+    l.trails = { tm, tf };
+  }
+  landDirty = true;
+}
+
+// ───────────────────────── Water routes ─────────────────────────
+// The boat only ever sails on water: harbours sit offshore and every leg is a smooth spline that is
+// pushed clear of the land.
+function harborFor(l) {
+  const base = Math.atan2(-l.cy, -l.cx);
+  for (let i = 0; i < 24; i++) {
+    const a = base + (i % 2 ? 1 : -1) * Math.ceil(i / 2) * 0.27;
+    const r = lobeR(l, a) + 66, x = l.cx + Math.cos(a) * r, y = l.cy + Math.sin(a) * r;
+    if (landGap(x, y) > 52) return [x, y];
+  }
+  return [l.cx - Math.sign(l.cx || 1) * (l.R + 120), l.cy];
+}
+function clearOfLand(p, margin) {
+  for (let it = 0; it < 6; it++) {
+    let worst = null, wg = margin;
+    for (const l of lobes) { const g = lobeGap(l, p[0], p[1]); if (g < wg) { wg = g; worst = l; } }
+    if (!worst) return p;
+    const dx = p[0] - worst.cx, dy = p[1] - worst.cy, d = Math.hypot(dx, dy) || 1, r = lobeR(worst, Math.atan2(dy, dx)) + margin + 2;
+    p = [worst.cx + (dx / d) * r, worst.cy + (dy / d) * r];
+  }
+  return p;
+}
+function splinePath(way) {
+  const P = way, n = P.length, pts = [P[0]];
+  if (n > 1) {
+    const ext = [[2 * P[0][0] - P[1][0], 2 * P[0][1] - P[1][1]], ...P, [2 * P[n - 1][0] - P[n - 2][0], 2 * P[n - 1][1] - P[n - 2][1]]];
+    const tj = (a, b) => Math.max(1e-3, Math.pow(Math.hypot(b[0] - a[0], b[1] - a[1]), 0.5));
+    const L = (a, b, u) => [a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u];
+    for (let i = 0; i < n - 1; i++) {
+      const p0 = ext[i], p1 = ext[i + 1], p2 = ext[i + 2], p3 = ext[i + 3];
+      const t0 = 0, t1 = tj(p0, p1), t2 = t1 + tj(p1, p2), t3 = t2 + tj(p2, p3);
+      const steps = Math.max(8, Math.ceil(Math.hypot(p2[0] - p1[0], p2[1] - p1[1]) / 10));
+      for (let s = 1; s <= steps; s++) {
+        const t = t1 + ((t2 - t1) * s) / steps;
+        const A1 = L(p0, p1, (t - t0) / (t1 - t0)), A2 = L(p1, p2, (t - t1) / (t2 - t1)), A3 = L(p2, p3, (t - t2) / (t3 - t2));
+        const B1 = L(A1, A2, (t - t0) / (t2 - t0)), B2 = L(A2, A3, (t - t1) / (t3 - t1));
+        pts.push(L(B1, B2, (t - t1) / (t2 - t1)));
+      }
+    }
+  }
+  // Push any stretch that grazes land back out to sea, then relax it so the curve stays smooth.
+  for (let pass = 0; pass < 3; pass++) {
+    for (let i = 1; i < pts.length - 1; i++) pts[i] = clearOfLand(pts[i], 44);
+    for (let k = 0; k < 4; k++) for (let i = 1; i < pts.length - 1; i++) pts[i] = [(pts[i - 1][0] + 2 * pts[i][0] + pts[i + 1][0]) / 4, (pts[i - 1][1] + 2 * pts[i][1] + pts[i + 1][1]) / 4];
+  }
+  return pts;
+}
+let voyage = null; // { pts, cum, total, stops: [arc length at each harbour] }
+function makeVoyage(way) {
+  const pts = [], stops = [0];
+  for (let i = 0; i < way.length - 1; i++) {
+    // Each leg bends gently toward the open water of the home sea, so it sweeps rather than cuts.
+    const a = way[i], b = way[i + 1], mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    const toC = Math.hypot(mid[0], mid[1]) || 1, bend = Math.min(0.22 * len, 120);
+    const m2 = clearOfLand([mid[0] - (mid[0] / toC) * bend, mid[1] - (mid[1] / toC) * bend], 60);
+    const leg = splinePath([a, m2, b]);
+    if (pts.length) leg.shift();
+    pts.push(...leg);
+    stops.push(pts.length - 1);
+  }
+  if (!pts.length) pts.push(way[0]);
+  const cum = [0];
+  for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+  return { pts, cum, total: cum[cum.length - 1], stops: stops.map((i) => cum[i]) };
+}
+function voyageAt(v, s) {
+  const { pts, cum } = v;
+  if (pts.length < 2) return { x: pts[0][0], y: pts[0][1], ang: 0 };
+  s = clamp(s, 0, v.total);
+  let lo = 0, hi = cum.length - 1;
+  while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (cum[mid] < s) lo = mid; else hi = mid; }
+  const u = cum[hi] > cum[lo] ? (s - cum[lo]) / (cum[hi] - cum[lo]) : 0, a = pts[lo], b = pts[hi];
+  return { x: a[0] + (b[0] - a[0]) * u, y: a[1] + (b[1] - a[1]) * u, ang: Math.atan2((b[1] - a[1]) * K, b[0] - a[0]) };
+}
+function journeyWaypoints() {
+  const seq = graph.journey().filter((l) => l.state === 'mastered').map((l) => markOf.get(l.id));
+  const order = [];
+  for (const m of seq) if (!order.includes(m.lobe.isl)) order.push(m.lobe.isl);
+  const last = seq[seq.length - 1];
+  const way = order.map((isl) => isl.lobes[0].harbor);
+  if (last) way.push(last.lobe.harbor);
+  return way.filter((p, i) => i === 0 || Math.hypot(p[0] - way[i - 1][0], p[1] - way[i - 1][1]) > 20);
+}
+const boat = { s: 0, x: 0, y: 0, ang: 0, sailing: false, lobe: null };
+let boatLeg = null; // { s0, s1, t0, dur }
+
+// ───────────────────────── Camera (projected space) ─────────────────────────
+let VP = { x: 0, y: 0, w: 1, h: 1, cx: 0, cy: 0 };
+const cam = { x: 0, y: 0, z: 0.5 }, camV = { x: 0, y: 0, z: 0 };
+let camTarget = null, snapCam = true, camMoving = true;
+const CAM_FREQ = reduceMotion ? 40 : 12;
+function viewport() {
+  const narrow = W < 640;
+  const padX = narrow ? 8 : 32, padTop = narrow ? 104 : 112;
+  let padBot = narrow ? 80 : 96, padRight = padX;
+  if (card && card.lesson) { if (W >= 900) padRight = 392; else padBot = Math.min(H * 0.5, 330); }
+  const w = Math.max(60, W - padX - padRight), h = Math.max(60, H - padTop - padBot);
+  return { x: padX, y: padTop, w, h, cx: padX + w / 2, cy: padTop + h / 2 };
+}
+const fit = (b) => ({ x: (b.x0 + b.x1) / 2, y: (b.y0 + b.y1) / 2, z: Math.min(VP.w / (b.x1 - b.x0), VP.h / (b.y1 - b.y0)) });
+const blend = (a, b, t) => ({ x: lerp(a.x, b.x, t), y: lerp(a.y, b.y, t), z: a.z * Math.pow(b.z / a.z, t) });
+const overviewFrame = () => fit(portrait ? chartBox : worldBox);
+const islandFrame = (d) => { const f = fit(islands.find((i) => i.di === d).box); f.z = Math.min(f.z, 2); return f; };
+const lobeFrame = (l) => { const r = l.R * 1.5; const f = fit(projBox(l.cx - r, l.cy - r, l.cx + r, l.cy + r)); f.z = Math.min(f.z, 2.6); return f; };
+const w2s = (x, y, h = 0) => ({ x: VP.cx + (x - cam.x) * cam.z, y: VP.cy + (py(y, h) - cam.y) * cam.z });
+const s2w = (sx, sy, h = 0) => ({ x: cam.x + (sx - VP.cx) / cam.z, y: ((cam.y + (sy - VP.cy) / cam.z) + h) / K });
+function zoomAbout(t, sx, sy, f) {
+  const dx = sx - VP.cx, dy = sy - VP.cy, z1 = t.z * f;
+  t.x += dx * (1 / t.z - 1 / z1); t.y += dy * (1 / t.z - 1 / z1); t.z = z1;
+}
+function animateCam(dt) {
+  if (!camTarget) return;
+  const before = cam.x + cam.y * 7 + cam.z * 1000;
+  if (snapCam) { cam.x = camTarget.x; cam.y = camTarget.y; cam.z = camTarget.z; camV.x = camV.y = camV.z = 0; snapCam = false; camMoving = true; return; }
+  const w = intro.active ? 4 : CAM_FREQ, steps = Math.max(1, Math.ceil(dt * 240)), h = dt / steps, tz = Math.log(camTarget.z);
+  let lz = Math.log(cam.z);
+  for (let i = 0; i < steps; i++) {
+    camV.x += (w * w * (camTarget.x - cam.x) - 2 * w * camV.x) * h; cam.x += camV.x * h;
+    camV.y += (w * w * (camTarget.y - cam.y) - 2 * w * camV.y) * h; cam.y += camV.y * h;
+    camV.z += (w * w * (tz - lz) - 2 * w * camV.z) * h; lz += camV.z * h;
+  }
+  cam.z = Math.exp(lz);
+  camMoving = Math.abs(cam.x + cam.y * 7 + cam.z * 1000 - before) > 0.002;
+}
+
+// ───────────────────────── Tweens ─────────────────────────
+const tweens = [];
+let clock = performance.now();
+function tween(obj, key, to, dur, { delay = 0, ease = easeOutCubic, from = null } = {}) {
+  for (let i = tweens.length - 1; i >= 0; i--) if (tweens[i].obj === obj && tweens[i].key === key) tweens.splice(i, 1);
+  if (reduceMotion) { obj[key] = to; return; }
+  if (from != null) obj[key] = from;
+  tweens.push({ obj, key, from, to, t0: clock + delay * 1000, dur: Math.max(1, dur * 1000), ease });
+}
+function runTweens(now) {
+  for (let i = tweens.length - 1; i >= 0; i--) {
+    const tw = tweens[i], u = (now - tw.t0) / tw.dur;
+    if (u < 0) continue;
+    if (tw.start == null) tw.start = tw.from != null ? tw.from : tw.obj[tw.key];
+    tw.obj[tw.key] = lerp(tw.start, tw.to, tw.ease(clamp(u, 0, 1)));
+    if (u >= 1) { tw.obj[tw.key] = tw.to; tweens.splice(i, 1); }
+  }
+}
+const later = (sec, fn) => setTimeout(fn, reduceMotion ? 0 : sec * 1000);
+
+// ───────────────────────── Chrome + lesson card ─────────────────────────
+let card = null;
+const chrome = mountChrome({
+  id: 'uncharted', eyebrow: 'Your SAT knowledge graph', title: 'Uncharted',
+  tagline: 'Everything you’ve mastered is on the map. Everything else is under cloud. Go find out what’s there.',
+  gateBackground: 'radial-gradient(120% 90% at 50% 110%, #1E6FBE 0%, #103B84 45%, #0A2B64 100%)',
+  beginLabel: 'Set sail', onBegin: () => begin(),
+});
+const { score, caption } = chrome;
+card = createLessonCard(graph, {
+  score, caption,
+  onOpen: (n) => { if (focus !== n.domainIndex) setFocus(n.domainIndex, true); },
+  onClose: () => score.sfx('back'),
+  onComplete: (evt) => onComplete(evt),
+});
+
+// ───────────────────────── Navigation (lean, then commit) ─────────────────────────
+const DWELL = { in: 90, out: 280, side: 220 }, SETTLE = reduceMotion ? 120 : 340;
+let focus = -1, pending = null, lockUntil = 0, hoverMark = null, hoverIsland = null;
+const pointer = { x: -9999, y: -9999, in: false, lastMoveAt: 0, travel: 0, type: 'mouse', down: false, dx: 0, dy: 0 };
+function setFocus(idx, quiet = false) {
+  if (idx === focus) return;
+  const wasIn = focus >= 0;
+  focus = idx;
+  lockUntil = clock + SETTLE; pointer.travel = 0; pending = null;
+  if (!quiet) score.sfx(idx >= 0 ? 'zoomIn' : wasIn ? 'zoomOut' : 'zoomIn');
+  renderBack();
+  if (card.lesson && card.lesson.domainIndex !== idx) card.close();
+}
+function goBack() {
+  if (card.lesson) { card.close(); return; }
+  if (focus >= 0) { score.sfx('back'); setFocus(-1, true); }
+}
+const groundGap = (isl, sx, sy) => { const p = s2w(sx, sy, H_GRASS); return islandGap(isl, p.x, p.y) * cam.z; };
+let navFocus = null, navVP = '';
+function nav(now) {
+  if (intro.active) return;
+  if (card.lesson) {
+    const m = markOf.get(card.lesson.id);
+    camTarget = blend(islandFrame(m.lobe.isl.di), lobeFrame(m.lobe), 0.5);
+    pending = null; navFocus = null; return;
+  }
+  const vpKey = `${VP.w}x${VP.h}`;
+  // Pointer off the chart (over the score card, the dock, or out of the window): hold still.
+  if (!pointer.in && camTarget && navFocus === focus && navVP === vpKey) { pending = null; return; }
+  navFocus = focus; navVP = vpKey;
+  const t = focus < 0 ? overviewFrame() : islandFrame(focus);
+  let cand = null;
+  if (pointer.in && pointer.type !== 'touch') {
+    const gaps = islands.map((isl) => groundGap(isl, pointer.x, pointer.y));
+    const idxAt = (i) => islands[i].di;
+    // Every lean zooms about the cursor, so whatever is under the hand stays under the hand.
+    if (focus < 0) {
+      let bi = 0; gaps.forEach((g, i) => { if (g < gaps[bi]) bi = i; });
+      zoomAbout(t, pointer.x, pointer.y, 1 + 0.2 * sstep(150, 0, gaps[bi]));
+      if (gaps[bi] <= 6) cand = { type: 'in', idx: idxAt(bi) };
+    } else {
+      const fi = islands.findIndex((i) => i.di === focus), g = gaps[fi];
+      let side = -1;
+      gaps.forEach((gg, i) => { if (i !== fi && gg <= 6 && (side < 0 || gg < gaps[side])) side = i; });
+      if (side >= 0) cand = { type: 'side', idx: idxAt(side) };
+      else if (g > 0) { zoomAbout(t, pointer.x, pointer.y, 1 - 0.14 * sstep(40, 240, g)); if (g > 110) cand = { type: 'out', idx: -1 }; }
+      else zoomAbout(t, pointer.x, pointer.y, 1 + 0.14 * sstep(0, 70, -g));
+    }
+    // Only at the very edge does the chart lean that way, so reading never drifts the map.
+    const nx = (pointer.x - VP.cx) / (VP.w / 2), ny = (pointer.y - VP.cy) / (VP.h / 2);
+    t.x += Math.sign(nx) * sstep(0.88, 1.06, Math.abs(nx)) * 0.05 * VP.w / t.z;
+    t.y += Math.sign(ny) * sstep(0.88, 1.06, Math.abs(ny)) * 0.05 * VP.h / t.z;
+  }
+  if (cand && now >= lockUntil) {
+    if (!pending || pending.type !== cand.type || pending.idx !== cand.idx) pending = { ...cand, since: now };
+    const armed = pointer.travel >= 6 && pointer.lastMoveAt >= pending.since - 350;
+    if (armed && now - pending.since >= DWELL[cand.type]) setFocus(cand.idx);
+  } else if (!cand) pending = null;
+  camTarget = t;
+}
+
+// ───────────────────────── Cloud cover ─────────────────────────
+const R_MASTERED = 150, R_FRONTIER = 100;
+/** How clear the sky is over a map point (0 = covered, 1 = explored). */
+function clearAt(x, y) {
+  const e = (x / (home.rx * 1.08)) ** 2 + (y / (home.ry * 1.08)) ** 2;
+  let c = sstep(1, 0.72, e);
+  if (c >= 1) return 1;
+  for (const m of marks) {
+    const st = m.leaf.state;
+    if (st === 'locked') continue;
+    const R = st === 'mastered' ? R_MASTERED : R_FRONTIER, d = Math.abs(m.x - x) + Math.abs(m.y - y);
+    if (d > R * 1.5) continue;
+    c = Math.max(c, sstep(R, R * 0.45, Math.hypot(m.x - x, m.y - y)));
+  }
+  for (const l of lobes) if (l.topic.masteredCount === l.topic.leafCount) c = Math.max(c, sstep(l.R * 1.25, l.R * 0.9, Math.hypot(l.cx - x, l.cy - y)));
+  return c;
+}
+/** A puff covers whatever it visually overlaps, so judge it by its whole footprint on the ground. */
+function computeTargets() {
+  const lift = (H_CLOUD - H_GRASS) / K;
+  for (const p of puffs) {
+    const cx = p.x, cy = p.y - lift, hx = PUFF_W * 0.3 * p.s, hy = (PUFF_H * 0.28 * p.s) / K;
+    const c = Math.max(clearAt(cx, cy), clearAt(cx - hx, cy), clearAt(cx + hx, cy), clearAt(cx, cy - hy), clearAt(cx, cy + hy),
+      clearAt(cx - hx * 0.7, cy - hy * 0.7), clearAt(cx + hx * 0.7, cy - hy * 0.7), clearAt(cx - hx * 0.7, cy + hy * 0.7), clearAt(cx + hx * 0.7, cy + hy * 0.7));
+    p.target = 1 - c;
+  }
+}
+/** Part every puff that has just become clear, outward from `c`, the nearest first. */
+function partClouds(cx, cy, { delayPer = 0.0011, maxDelay = 1.1, dur = 0.95 } = {}) {
+  let n = 0;
+  for (const p of puffs) {
+    if (p.part || p.cov <= 0.12) continue;
+    if (p.target < 0.12) {
+      const dx = p.x - cx, dy = p.y - cy, d = Math.hypot(dx, dy) || 1;
+      p.part = { t0: clock + Math.min(maxDelay, d * delayPer) * 1000, dur: dur * 1000, dx: dx / d, dy: dy / d };
+      n++;
+    } else if (Math.abs(p.target - p.cov) > 0.02) tween(p, 'cov', p.target, 0.9, { delay: Math.min(maxDelay, Math.hypot(p.x - cx, p.y - cy) * delayPer) });
+  }
+  return n;
+}
+function settleClouds() { for (const p of puffs) { p.part = null; p.cov = p.target; } }
+const lantern = { s: 0, r: 150, on: false, peekAt: -1e9 };
+let pointerCover = 0;
+
+// ───────────────────────── Drawing ─────────────────────────
+const setScreen = (c = ctx) => c.setTransform(DPR, 0, 0, DPR, 0, 0);
+const setProj = (c = ctx) => c.setTransform(DPR * cam.z, 0, 0, DPR * cam.z, DPR * (VP.cx - cam.x * cam.z), DPR * (VP.cy - cam.y * cam.z));
+function text(str, x, y, o = {}) {
+  const { size = 12, head = false, weight = 700, color = C.ink, halo = 'rgba(255,255,252,0.92)', haloW = 3, align = 'center', alpha = 1, italic = false } = o;
+  if (alpha <= 0.01) return;
+  ctx.save(); ctx.globalAlpha = Math.min(1, alpha);
+  ctx.font = `${italic ? 'italic ' : ''}${head ? 'normal' : weight} ${size}px ${head ? HEAD : BODY}`;
+  ctx.textAlign = align; ctx.textBaseline = 'middle';
+  if (halo) { ctx.lineJoin = 'round'; ctx.lineWidth = haloW; ctx.strokeStyle = halo; ctx.strokeText(str, x, y); }
+  ctx.fillStyle = color; ctx.fillText(str, x, y);
+  ctx.restore();
+}
+function pill(str, x0, y, { size = 12, alpha = 1 } = {}) {
+  if (alpha <= 0.01) return;
+  ctx.save(); ctx.globalAlpha = alpha; ctx.font = `700 ${size}px ${BODY}`;
+  const w = ctx.measureText(str).width + 16;
+  ctx.beginPath(); ctx.roundRect(x0, y - 12, w, 24, 12); ctx.fillStyle = C.nightDeep; ctx.fill();
+  ctx.fillStyle = C.foam; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(str, x0 + 8, y + 0.5);
+  ctx.restore();
+}
+
+function drawWater(now) {
+  const t = now / 1000;
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, mixHex(C.w2, C.w3, 0.25)); g.addColorStop(1, mixHex(C.w3, C.wsh, 0.3));
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  const o = w2s(0, 0);
+  const rg = ctx.createRadialGradient(o.x, o.y, 0, o.x, o.y, Math.max(home.rx, home.ry) * cam.z * 1.4);
+  rg.addColorStop(0, rgba(C.w1, 0.35)); rg.addColorStop(1, rgba(C.w1, 0));
+  ctx.fillStyle = rg; ctx.fillRect(0, 0, W, H);
+  // Sparkles: brief glints on the swell.
+  ctx.strokeStyle = C.foam; ctx.lineCap = 'round';
+  const s = clamp(2 + 3 * cam.z, 2.5, 5);
+  for (const sp of sparkles) {
+    const a = reduceMotion ? 0.3 : Math.pow(Math.max(0, Math.sin(t * sp.w + sp.p)), 10);
+    if (a < 0.05) continue;
+    const p = w2s(sp.x, sp.y);
+    if (p.x < -10 || p.y < -10 || p.x > W + 10 || p.y > H + 10) continue;
+    ctx.globalAlpha = a * 0.8; ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.moveTo(p.x - s, p.y); ctx.lineTo(p.x + s, p.y); ctx.moveTo(p.x, p.y - s * 0.6); ctx.lineTo(p.x, p.y + s * 0.6); ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+}
+
+let landKey = '', landDirty = true;
+const landAnimating = () => lobes.some((l) => l.pop > 0.001 || (l.solidT > 0.001 && l.solidT < 0.999));
+/** The terrain layer (islands, trees, flags) only changes when the camera or the chart does, so it is
+ *  rendered once into an offscreen canvas and blitted while things are still. */
+function drawLand(now) {
+  const detail = markDetail();
+  const key = `${cam.x.toFixed(2)}|${cam.y.toFixed(2)}|${cam.z.toFixed(4)}|${W}x${H}|${layoutVersion}|${detail.toFixed(2)}|${hoverMark ? hoverMark.leaf.id : ''}`;
+  const still = !camMoving && !landAnimating() && !intro.active;
+  if (still && key === landKey && !landDirty) { setScreen(); ctx.drawImage(landCv, 0, 0, W, H); return; }
+  if (still) {
+    lctx.setTransform(1, 0, 0, 1, 0, 0); lctx.clearRect(0, 0, landCv.width, landCv.height);
+    renderLand(lctx, detail); landKey = key; landDirty = false;
+    setScreen(); ctx.drawImage(landCv, 0, 0, W, H);
+  } else { renderLand(ctx, detail); landKey = ''; }
+}
+function renderLand(c, detail) {
+  setProj(c);
+  const px = 1 / cam.z, tl = { x: cam.x - (VP.cx + 80) / cam.z, y: cam.y - (VP.cy + 80) / cam.z }, br = { x: cam.x + (W - VP.cx + 80) / cam.z, y: cam.y + (H - VP.cy + 80) / cam.z };
+  c.lineJoin = 'round'; c.lineCap = 'round';
+  for (const isl of islands) {
+    const b = isl.box;
+    if (b.x1 < tl.x || b.x0 > br.x || b.y1 < tl.y || b.y0 > br.y) continue;
+    c.fillStyle = 'rgba(207,239,255,0.28)'; c.fill(isl.shallowFar);
+    c.fillStyle = 'rgba(207,239,255,0.4)'; c.fill(isl.shallowNear);
+    c.lineWidth = 3 * px; c.strokeStyle = 'rgba(255,255,252,0.85)'; c.stroke(isl.foam);
+    // Sand rim.
+    isl.sandSide.forEach((p, i) => { c.fillStyle = SAND_SIDE[i]; c.fill(p); c.lineWidth = 0.8 * px; c.strokeStyle = SAND_SIDE[i]; c.stroke(p); });
+    c.fillStyle = SAND; c.fill(isl.sandTop);
+    // Grass tier: cliffs, then tops (explored hills in colour, unexplored ones pale).
+    for (const l of isl.lobes) l.grassSide.forEach((p, i) => { const col = l.solidT >= 0.999 ? CLIFF[i] : mixHex(GHOST_SIDE[i], CLIFF[i], l.solidT); c.fillStyle = col; c.fill(p); c.lineWidth = 0.8 * px; c.strokeStyle = col; c.stroke(p); });
+    for (const l of isl.lobes) { c.fillStyle = l.solidT >= 0.999 ? GRASS : mixHex(GHOST_TOP, GRASS, l.solidT); c.fill(l.top); }
+    c.lineWidth = 2.2 * px; c.strokeStyle = rgba(isl.hue, 0.9); c.stroke(isl.trim);
+    // Plateaus (one per topic), back to front; a fresh one pops up with a little bounce.
+    for (const l of [...isl.lobes].sort((a, b) => a.cy - b.cy)) {
+      const lift = l.pop > 0.001 ? 16 * Math.sin(Math.PI * l.pop) * (1 - 0.5 * l.pop) : 0;
+      const sideCol = (i) => (l.solidT >= 0.999 ? CLIFF[i] : mixHex(GHOST_SIDE[i], CLIFF[i], l.solidT));
+      for (const dy of lift ? [0, -lift] : [0]) {
+        c.save(); c.translate(0, dy);
+        l.platSide.forEach((p, i) => { c.fillStyle = sideCol(i); c.fill(p); c.lineWidth = 0.8 * px; c.strokeStyle = sideCol(i); c.stroke(p); });
+        c.restore();
+      }
+      c.save(); c.translate(0, -lift);
+      c.fillStyle = l.solidT >= 0.999 ? PLATEAU : mixHex(GHOST_TOP, PLATEAU, l.solidT); c.fill(l.platTop);
+      if (l.solidT > 0.01) { c.globalAlpha = l.solidT; c.lineWidth = 1.6 * px; c.strokeStyle = rgba(isl.hue, 0.75); c.stroke(l.platRim); c.globalAlpha = 1; }
+      c.restore();
+      // Trails up the hill, once close enough to read them.
+      if (detail > 0.02) {
+        c.globalAlpha = detail;
+        c.lineWidth = 3.2 * px; c.strokeStyle = mixHex(SAND, C.foam, 0.3); c.stroke(l.trails.tm);
+        c.lineWidth = 3.2 * px; c.strokeStyle = C.sun; c.stroke(l.trails.tf);
+        c.globalAlpha = 1;
+      }
+    }
+    // Props on this island, back to front: rocks, trees, lesson flags.
+    const props = [];
+    for (const r of isl.rocks) props.push({ y: r.y, f: () => drawRock(c, r) });
+    for (const t of trees) if (t.isl === isl && t.lobe.solidT > 0.01) props.push({ y: t.y, f: () => drawTree(c, t) });
+    if (detail > 0.02) for (const l of isl.lobes) for (const m of l.marks) if (m.leaf.state === 'mastered') props.push({ y: m.y, f: () => drawFlag(c, m, detail) });
+    props.sort((a, b) => a.y - b.y).forEach((p) => p.f());
+  }
+}
+const propScale = () => clamp(cam.z, 0.42, 1.6);
+function drawTree(c, t) {
+  const s = t.s * 11 * propScale() / cam.z, x = t.x, y = py(t.y, t.h);
+  c.globalAlpha = t.lobe.solidT;
+  c.fillStyle = 'rgba(10,35,79,0.16)'; c.beginPath(); c.ellipse(x + s * 0.2, y + s * 0.1, s * 0.9, s * 0.4, 0, 0, TAU); c.fill();
+  c.fillStyle = mixHex(SAND, C.ink, 0.45); c.fillRect(x - s * 0.12, y - s * 0.9, s * 0.24, s * 0.9);
+  c.fillStyle = TREE; c.beginPath(); c.arc(x, y - s * 1.35, s * 0.85, 0, TAU); c.fill();
+  c.fillStyle = TREE_LIT; c.beginPath(); c.arc(x - s * 0.22, y - s * 1.55, s * 0.5, 0, TAU); c.fill();
+  c.globalAlpha = 1;
+}
+function drawRock(c, r) {
+  const s = r.s * 7 * propScale() / cam.z, x = r.x, y = py(r.y, H_SAND);
+  c.fillStyle = mixHex(C.muted, C.ink, 0.15); c.beginPath(); c.ellipse(x, y - s * 0.3, s, s * 0.7, 0, 0, TAU); c.fill();
+  c.fillStyle = mixHex(C.cloud, C.foam, 0.2); c.beginPath(); c.ellipse(x - s * 0.25, y - s * 0.55, s * 0.55, s * 0.38, 0, 0, TAU); c.fill();
+}
+/** A mastered lesson: a small flag in the island's colour. */
+function drawFlag(c, m, detail) {
+  const s = 8 * propScale() / cam.z * (1 + 0.25 * m.hover), x = m.x, y = py(m.y, m.h);
+  c.globalAlpha = Math.max(detail, m.hover);
+  c.fillStyle = 'rgba(10,35,79,0.18)'; c.beginPath(); c.ellipse(x, y, s * 0.6, s * 0.25, 0, 0, TAU); c.fill();
+  c.strokeStyle = C.ink; c.lineWidth = Math.max(0.12 * s, 1.1 / cam.z); c.beginPath(); c.moveTo(x, y); c.lineTo(x, y - s * 2.1); c.stroke();
+  c.fillStyle = m.lobe.isl.hue; c.beginPath(); c.moveTo(x, y - s * 2.1); c.lineTo(x + s * 1.2, y - s * 1.75); c.lineTo(x, y - s * 1.4); c.closePath(); c.fill();
+  c.globalAlpha = 1;
+}
+function markDetail() { const ovz = overviewFrame().z; return intro.active ? 0 : sstep(ovz * 1.2, ovz * 1.8, cam.z); }
+
+function drawFoamRipple(now) {
+  if (reduceMotion) return;
+  setProj();
+  const t = now / 1000, a = 0.18 + 0.12 * Math.sin(t * 1.4);
+  ctx.lineWidth = 2 / cam.z; ctx.strokeStyle = `rgba(255,255,252,${a})`;
+  for (const isl of islands) ctx.stroke(isl.ripple);
+}
+
+/** A lesson you're ready for: a small white beacon tower, its lamp lit. Drawn above the clouds. */
+function drawBeacon(m, t) {
+  const z = cam.z, s = 11 * propScale() * (1 + 0.22 * m.hover) * (0.5 + 0.5 * m.lit) * (1 + 0.25 * Math.sin(Math.PI * clamp(m.pop, 0, 1))), x = m.sx, y = m.sy;
+  const lampY = y - s * 2.6, pulse = reduceMotion ? 0.5 : 0.5 + 0.5 * Math.sin(t * 1.8 + m.leaf.id * 1.7);
+  const g = s * (3.2 + 0.8 * pulse + 0.8 * m.hover + 4 * m.flare);
+  ctx.globalAlpha = clamp(m.lit * (0.55 + 0.25 * pulse) + 0.35 * m.flare, 0, 1);
+  ctx.drawImage(GLOW, x - g, lampY - g, g * 2, g * 2);
+  ctx.globalAlpha = Math.max(0.3, m.lit);
+  ctx.fillStyle = 'rgba(10,35,79,0.2)'; ctx.beginPath(); ctx.ellipse(x, y, s * 0.9, s * 0.35, 0, 0, TAU); ctx.fill();
+  ctx.fillStyle = C.foam; ctx.strokeStyle = C.ink; ctx.lineWidth = 1.2;
+  ctx.beginPath(); ctx.moveTo(x - s * 0.55, y); ctx.lineTo(x - s * 0.38, y - s * 2.2); ctx.lineTo(x + s * 0.38, y - s * 2.2); ctx.lineTo(x + s * 0.55, y); ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = m.lobe.isl.hue; ctx.fillRect(x - s * 0.47, y - s * 1.25, s * 0.94, s * 0.4);
+  ctx.beginPath(); ctx.arc(x, lampY, s * 0.48, 0, TAU); ctx.fillStyle = C.sun; ctx.fill(); ctx.lineWidth = 1.2; ctx.strokeStyle = C.sunSh; ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x - s * 0.55, y - s * 2.95); ctx.lineTo(x, y - s * 3.35); ctx.lineTo(x + s * 0.55, y - s * 2.95); ctx.closePath(); ctx.fillStyle = C.ink; ctx.fill();
+  ctx.globalAlpha = 1;
+  m.top = y - s * 3.4; m.r = s;
+}
+
+function drawBoat(now) {
+  const t = now / 1000, z = cam.z, size = clamp(7 + 5 * z, 10, 15), bob = reduceMotion ? 0 : Math.sin(t * 1.6) * 0.06;
+  // A soft wake trail along the route behind the boat while it sails.
+  if (boat.sailing && voyage) {
+    setProj(); ctx.lineCap = 'round';
+    for (let i = 0; i < 6; i++) {
+      const s0 = boat.s - (i + 1) * 34, s1 = boat.s - i * 34;
+      if (s1 <= 0) break;
+      const a = voyageAt(voyage, Math.max(0, s0)), b = voyageAt(voyage, s1);
+      ctx.globalAlpha = 0.6 * (1 - i / 6); ctx.lineWidth = (4 - i * 0.5) / z; ctx.strokeStyle = C.foam;
+      ctx.beginPath(); ctx.moveTo(a.x, py(a.y)); ctx.lineTo(b.x, py(b.y)); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }
+  setScreen();
+  const s = w2s(boat.x, boat.y);
+  ctx.save(); ctx.translate(s.x, s.y); ctx.rotate(boat.ang + bob);
+  ctx.fillStyle = 'rgba(10,35,79,0.2)'; ctx.beginPath(); ctx.ellipse(0, 3, size * 1.25, size * 0.55, 0, 0, TAU); ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(size * 1.25, 0);
+  ctx.quadraticCurveTo(size * 0.6, -size * 0.6, -size * 0.85, -size * 0.46);
+  ctx.quadraticCurveTo(-size * 1.05, 0, -size * 0.85, size * 0.46);
+  ctx.quadraticCurveTo(size * 0.6, size * 0.6, size * 1.25, 0);
+  ctx.closePath(); ctx.fillStyle = C.foam; ctx.fill(); ctx.lineWidth = 1.6; ctx.strokeStyle = C.ink; ctx.stroke();
+  ctx.restore();
+  // Mast and sail stand upright (screen space), like every other prop.
+  const sail = size * 1.6;
+  ctx.strokeStyle = C.ink; ctx.lineWidth = 1.4; ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(s.x, s.y - sail); ctx.stroke();
+  const dir = Math.cos(boat.ang) >= 0 ? 1 : -1;
+  ctx.beginPath(); ctx.moveTo(s.x + dir * 1.5, s.y - sail); ctx.quadraticCurveTo(s.x + dir * size * 1.1, s.y - sail * 0.55, s.x + dir * 1.5, s.y - 3); ctx.closePath();
+  ctx.fillStyle = C.sun; ctx.fill(); ctx.lineWidth = 1.2; ctx.strokeStyle = C.sunSh; ctx.stroke();
+  boat.sx = s.x; boat.sy = s.y - sail * 0.5;
+}
+
+/** The cloud cover: stacked puffs, back to front. Parting puffs squash, then slide out and fade. */
+function drawClouds(now) {
+  setScreen();
+  const t = now / 1000, z = cam.z, wS = PUFF_W * z, hS = PUFF_H * z;
+  const lr = lantern.r, ls = lantern.s, gather = intro.gather || 0;
+  for (const p of puffs) {
+    let cov = p.cov, sx = 1, sy = 1, ox = 0, oy = 0, a = 1;
+    if (p.part) {
+      const u = (now - p.part.t0) / p.part.dur;
+      if (u >= 1) { p.part = null; p.cov = 0; continue; }
+      if (u > 0) {
+        if (u < 0.2) { const q = easeOutCubic(u / 0.2); sx = 1 + 0.06 * q; sy = 1 - 0.1 * q; }
+        else {
+          const q = (u - 0.2) / 0.8, e = easeOutCubic(q);
+          sx = 1.06 + 0.4 * e; sy = 0.9 + 0.5 * e; ox = p.part.dx * 220 * e; oy = p.part.dy * 220 * e; a = 1 - easeInCubic(q);
+        }
+      }
+    }
+    if (cov <= 0.02 && !p.part) continue;
+    const bobY = reduceMotion ? 0 : Math.sin(t * 0.35 + p.ph) * 3;
+    const c = w2s(p.x + ox + (reduceMotion ? 0 : Math.sin(t * 0.12 + p.ph) * 6), p.y + oy, H_CLOUD + bobY);
+    const f = (0.55 + 0.45 * cov) * p.s, w = wS * f * sx, h = hS * f * sy * (1 - 0.06 * gather);
+    if (c.x + w / 2 < 0 || c.x - w / 2 > W || c.y + h / 2 < 0 || c.y - h / 2 > H) continue;
+    let alpha = a * sstep(0.1, 0.45, cov);
+    if (ls > 0.01) {
+      const d2 = ((c.x - pointer.x) ** 2 + (c.y - pointer.y) ** 2) / (lr * lr);
+      if (d2 < 1) { const q = (1 - d2) * ls; alpha *= 1 - 0.42 * q; }
+    }
+    if (alpha <= 0.01) continue;
+    ctx.globalAlpha = alpha;
+    ctx.drawImage(CLOUDS[p.v], c.x - w / 2, c.y - h * 0.55, w, h);
+  }
+  ctx.globalAlpha = 1;
+}
+const lanternAt = (sx, sy) => {
+  if (lantern.s < 0.01) return 0;
+  const d2 = ((sx - pointer.x) ** 2 + (sy - pointer.y) ** 2) / (lantern.r * lantern.r);
+  return d2 >= 1 ? 0 : lantern.s * (1 - d2) * (1 - d2);
+};
+
+let chromeCache = null;
+const chromeEls = () => (chromeCache ||= ['.score', '.back.show', '.kg-dock', '.kg-sound'].map((q) => () => document.querySelector(q)))
+  .map((f) => f()).concat(card.lesson ? [card.el] : []).filter(Boolean);
+let boatHover = 0;
+
+function drawOverlay(now) {
+  setScreen();
+  const t = now / 1000, z = cam.z, focusedIsl = focus >= 0 ? islands.find((i) => i.di === focus) : null, ovz = overviewFrame().z;
+  const onScreen = (x, y, m = 40) => x > -m && y > -m && x < W + m && y < H + m;
+  // Inside the lantern: the dashed outline of hidden coast and a "?" on each hidden lesson.
+  const qBoxes = [];
+  if (lantern.s > 0.02) {
+    ctx.save(); ctx.beginPath(); ctx.arc(pointer.x, pointer.y, lantern.r * 0.75, 0, TAU); ctx.clip();
+    setProj(); ctx.globalAlpha = lantern.s * 0.55; ctx.setLineDash([5 / z, 6 / z]); ctx.lineWidth = 1.7 / z; ctx.strokeStyle = C.wsh;
+    for (const isl of islands) ctx.stroke(isl.coastGhost);
+    ctx.restore(); setScreen();
+    for (const m of marks) {
+      if (m.leaf.state !== 'locked' || !onScreen(m.sx, m.sy)) continue;
+      const la = lanternAt(m.sx, m.sy);
+      if (la > 0.03) {
+        const qs = 16;
+        text('?', m.sx, m.sy - 6, { size: qs, head: true, color: C.night, halo: 'rgba(255,255,252,0.85)', haloW: 3, alpha: la });
+        if (la > 0.1) qBoxes.push({ x0: m.sx - 7, y0: m.sy - 16, x1: m.sx + 7, y1: m.sy + 4 });
+      }
+    }
+  }
+  // Beacons (the only things that glow) sit above the clouds so the way forward always shows.
+  const beacons = marks.filter((m) => m.leaf.state === 'frontier' && (m.lit > 0.01 || m.flare > 0.01) && onScreen(m.sx, m.sy, 80)).sort((a, b) => a.sy - b.sy);
+  for (const m of beacons) drawBeacon(m, t);
+  // ── Labels: queued by priority and placed so nothing ever overlaps ──
+  const taken = [...qBoxes], ops = [];
+  const hit = (b, prio) => taken.some((o) => (!o.soft || prio < 90) && b.x0 < o.x1 && b.x1 > o.x0 && b.y0 < o.y1 && b.y1 > o.y0);
+  for (const m of beacons) taken.push({ x0: m.sx - m.r * 0.9, y0: m.top, x1: m.sx + m.r * 0.9, y1: m.sy + 2 });
+  if (voyage) taken.push({ x0: boat.sx - 16, y0: boat.sy - 20, x1: boat.sx + 16, y1: boat.sy + 20 });
+  const det = markDetail();
+  if (det > 0.5) for (const m of marks) if (m.leaf.state === 'mastered' && onScreen(m.sx, m.sy)) taken.push({ x0: m.sx - 4, y0: m.sy - 20, x1: m.sx + 12, y1: m.sy + 2, soft: true });
+  for (const el of chromeEls()) { const r = el.getBoundingClientRect(); if (r.width) taken.push({ x0: r.left - 4, y0: r.top - 4, x1: r.right + 4, y1: r.bottom + 4 }); }
+  const queue = (prio, str, x, y, o) => {
+    if (!str || (o.alpha ?? 1) <= 0.02) return;
+    const size = o.size || 12;
+    ctx.font = o.head ? `normal ${size}px ${HEAD}` : `${o.italic ? 'italic ' : ''}${o.weight || 700} ${size}px ${BODY}`;
+    ops.push({ prio, str, x, y, o, w: ctx.measureText(str).width + (o.pill ? 16 : 4), h: o.pill ? 24 : size * 1.3 });
+  };
+  const flip = (m, lift) => [[0, 0], [-(m.r * 2.4 + 16), 0, 'right'], [-(m.r * 1.2 + 8), -lift, 'center'], [-(m.r * 1.2 + 8), m.r * 2 + 20, 'center']];
+  if (hoverMark) {
+    const m = hoverMark, st = m.leaf.state;
+    if (st === 'frontier') queue(100, m.leaf.label, m.sx + m.r * 1.2 + 8, m.top + 10, { pill: true, alts: flip(m, 24) });
+    else queue(100, m.leaf.label, m.sx + 14, m.sy - 12, { align: 'left', color: C.ink, italic: st === 'locked', alts: [[0, 0], [-28, 0, 'right'], [-14, -18, 'center'], [-14, 22, 'center']] });
+  }
+  for (const m of beacons) {
+    if (m === hoverMark || m.lit < 0.5) continue;
+    if ((focusedIsl === m.lobe.isl && !card.lesson) || card.lesson === m.leaf) queue(90, m.leaf.label, m.sx + m.r * 1.2 + 8, m.top + 10, { pill: true, alpha: 0.94, alts: flip(m, 24) });
+  }
+  const pw = pointer.in ? s2w(pointer.x, pointer.y, H_GRASS) : null;
+  let nearIsl = null, nearGap = Infinity;
+  if (pw && !intro.active) for (const isl of islands) { const g = islandGap(isl, pw.x, pw.y) * z; if (g < nearGap) { nearGap = g; nearIsl = isl; } }
+  for (const isl of islands) {
+    const alpha = (focusedIsl === isl ? 0 : 1) * (1 - sstep(ovz * 1.35, ovz * 2.1, z)) * (intro.active ? intro.names : 1);
+    if (alpha < 0.02) continue;
+    const s = { x: VP.cx + (isl.nameAt.x - cam.x) * z, y: VP.cy + (isl.nameAt.y - cam.y) * z };
+    const size = W < 640 ? 13 : 15, below = (isl.box.y1 - isl.nameAt.y) * z - 40;
+    queue(88, isl.d.label, s.x, s.y, { head: true, size, color: C.ink, halo: rgba(C.foam, 0.92), haloW: 4, alpha, alts: [[0, 0], [0, -20], [0, below], [-56, 0], [56, 0], [0, -40]] });
+    const near = isl === nearIsl ? sstep(140, 20, nearGap) : 0;
+    if (near > 0.3) queue(85, `${pct(isl.d.m)} explored`, s.x, s.y + 24, { pill: true, align: 'center', alpha: alpha * (near - 0.3) / 0.7, alts: [[0, 0], [0, -48]] });
+  }
+  if (det > 0.5 && pointer.in) {
+    for (const m of marks) {
+      if (m.leaf.state !== 'mastered' || m === hoverMark) continue;
+      const d = Math.hypot(m.sx - pointer.x, m.sy - pointer.y);
+      if (d < 110) queue(70 - d / 20, m.leaf.label, m.sx + 14, m.sy - 12, { align: 'left', color: C.ink, alpha: sstep(110, 55, d) });
+    }
+  }
+  if (focusedIsl || z > ovz * 1.8) {
+    for (const l of lobes) {
+      const s = w2s(l.cx, l.cy, H_PLAT), la = lanternAt(s.x, s.y);
+      if (!onScreen(s.x, s.y, 100)) continue;
+      // A hill's name shows once its middle is out from under the clouds (or under the lantern).
+      const seen = sstep(0.35, 0.7, clearAt(l.cx, l.cy));
+      const alpha = l.open ? Math.max(0.9 * (focusedIsl === l.isl ? 1 : 0.55) * seen, la * 0.9) : la * 0.9;
+      queue(60, l.topic.label, s.x, s.y + 2, { head: true, size: 12, color: mixHex(C.success, C.ink, 0.7), halo: rgba(C.foam, 0.85), haloW: 3, alpha,
+        alts: [[0, 0], [0, -l.R * z * 0.22], [0, l.R * z * 0.24]] });
+    }
+  }
+  if (lantern.s > 0.3 && z > 0.5) {
+    marks.filter((m) => m.leaf.state === 'locked' && Math.hypot(m.sx - pointer.x, m.sy - pointer.y) < lantern.r * 0.65)
+      .sort((a, b) => Math.hypot(a.sx - pointer.x, a.sy - pointer.y) - Math.hypot(b.sx - pointer.x, b.sy - pointer.y)).slice(0, 2)
+      .forEach((m) => queue(50, m.leaf.label, m.sx + 10, m.sy - 6, { align: 'left', italic: true, color: C.night, alpha: (lanternAt(m.sx, m.sy) - 0.3) * 2.2, halo: 'rgba(255,255,252,0.85)' }));
+  }
+  if (boatHover > 0.02 && voyage) queue(95, `Your voyage so far`, boat.sx, boat.sy - 30, { pill: true, align: 'center', alpha: boatHover, alts: [[0, 0], [0, 64]] });
+
+  ops.sort((a, b) => b.prio - a.prio);
+  const placed = [];
+  for (const op of ops) {
+    for (const [dx, dy, al] of op.o.alts || [[0, 0]]) {
+      const align = al || op.o.align || (op.o.pill ? 'left' : 'center');
+      const x = op.x + dx, y = op.y + dy, x0 = align === 'left' ? x : align === 'right' ? x - op.w : x - op.w / 2;
+      const b = { x0: x0 - 2, y0: y - op.h / 2 - 1, x1: x0 + op.w + 2, y1: y + op.h / 2 + 1 };
+      if (b.x0 < 4 || b.y0 < 4 || b.x1 > W - 4 || b.y1 > H - 4 || hit(b, op.prio)) continue;
+      taken.push(b); placed.push({ ...op, x, y, align, x0 });
+      break;
+    }
+  }
+  for (let i = placed.length - 1; i >= 0; i--) {
+    const p = placed[i], o = p.o;
+    if (o.pill) pill(p.str, p.x0, p.y, { alpha: o.alpha ?? 1 });
+    else text(p.str, p.x, p.y, { size: o.size || 12, head: o.head, italic: o.italic, color: o.color || C.ink, halo: o.halo ?? 'rgba(255,255,252,0.92)', haloW: o.haloW || 3, align: p.align, alpha: o.alpha ?? 1 });
+  }
+}
+
+/** Full voyage, shown faintly while hovering the boat. */
+function drawVoyageHint() {
+  if (!voyage || boatHover < 0.02) return;
+  setProj(); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.globalAlpha = boatHover * 0.75; ctx.lineWidth = 2 / cam.z; ctx.strokeStyle = C.foam;
+  ctx.beginPath(); ctx.moveTo(voyage.pts[0][0], py(voyage.pts[0][1]));
+  for (let i = 1; i < voyage.pts.length; i++) { if (voyage.cum[i] > boat.s) break; ctx.lineTo(voyage.pts[i][0], py(voyage.pts[i][1])); }
+  ctx.stroke(); ctx.globalAlpha = 1;
+}
+
+// ───────────────────────── Intro: under cloud, then the reveal ─────────────────────────
+const intro = { active: false, t0: 0, fired: new Set(), gather: 0, names: 1, legT: [] };
+const T_BURST = 1.0, T_SAIL = 2.3, T_END = 7.3;
+const LINE_EDGE = 'This is where the map ends. For now.';
+function once(key, cond, fn) { if (cond && !intro.fired.has(key)) { intro.fired.add(key); fn(); } }
+function startIntro() {
+  document.body.classList.add('intro-hud');
+  intro.active = true; intro.t0 = clock; intro.fired = new Set(); intro.names = 0; intro.c = null;
+  for (const p of puffs) { p.cov = 1; p.part = null; }
+  computeTargets();
+  for (const m of marks) if (m.leaf.state === 'frontier') { m.lit = 0; m.flare = 0; }
+  voyage = makeVoyage(journeyWaypoints()); boat.s = 0; placeBoat();
+  // Leg timings: each leg eases in and out; longer legs take a little longer.
+  const legs = voyage.stops.slice(1).map((s, i) => Math.sqrt(s - voyage.stops[i]));
+  const sum = legs.reduce((a, b) => a + b, 0) || 1, span = T_END - 0.4 - T_SAIL;
+  let acc = T_SAIL; intro.legT = legs.map((l) => { const t0 = acc; acc += (l / sum) * span; return [t0, acc]; });
+  VP = viewport(); const ov = overviewFrame(); camTarget = { ...ov, z: ov.z * 0.9 }; snapCam = true;
+  score.setIntensity(0.1, 0.5);
+}
+function updateIntro(now) {
+  const T = (now - intro.t0) / 1000;
+  intro.gather = T < T_BURST ? sstep(0, T_BURST, T) : 0; // the cover tenses before it bursts
+  once('riser', T >= 0.05, () => { score.sfx('riser'); score.setIntensity(0.6, 1); });
+  once('burst', T >= T_BURST, () => {
+    score.sfx('intro'); score.setIntensity(0.75, 1.5);
+    const c = s2w(VP.cx, VP.cy);
+    intro.c = c;
+    partClouds(c.x, c.y, { delayPer: 0.001, maxDelay: 1.2, dur: 1.25 });
+    tween(intro, 'names', 1, 0.8, { delay: 1.5 });
+    document.body.classList.remove('intro-hud');
+  });
+  // Each beacon lights just after the clouds above it have rolled away.
+  if (intro.c) {
+    const order = marks.filter((m) => m.leaf.state === 'frontier').sort((a, b) => Math.hypot(a.x - intro.c.x, a.y - intro.c.y) - Math.hypot(b.x - intro.c.x, b.y - intro.c.y));
+    order.forEach((m, i) => once('b' + i, T >= T_BURST + 0.75 + Math.min(1.2, Math.hypot(m.x - intro.c.x, m.y - intro.c.y) * 0.001), () => ignite(m, i % 4 === 0)));
+  }
+  // The voyage: one leg at a time, easing out of each harbour and into the next.
+  intro.legT.forEach(([t0, t1], i) => {
+    once('dep' + i, T >= t0, () => score.sfx('step'));
+    if (T >= t0 && T <= t1 + 0.05) {
+      const u = easeInOutSine(clamp((T - t0) / (t1 - t0), 0, 1));
+      boat.s = lerp(voyage.stops[i], voyage.stops[i + 1], u); boat.sailing = u < 1;
+    }
+  });
+  if (T > T_END - 0.4) { boat.s = voyage.total; boat.sailing = false; }
+  placeBoat();
+  const ov = overviewFrame();
+  camTarget = { ...ov, z: ov.z * lerp(0.9, 1, sstep(0, T_SAIL, T)) };
+  once('end', T >= T_END, () => endIntro());
+}
+function endIntro(skipped = false) {
+  if (!intro.active) return;
+  intro.active = false; intro.gather = 0; intro.names = 1;
+  if (skipped) { settleClouds(); for (const m of marks) if (m.leaf.state === 'frontier') { m.lit = 1; } }
+  for (const m of marks) if (m.leaf.state === 'frontier' && m.lit < 1 && !tweens.some((tw) => tw.obj === m)) m.lit = 1;
+  boat.s = voyage.total; boat.sailing = false; placeBoat();
+  document.body.classList.remove('intro-hud');
+  caption(LINE_EDGE, 4200);
+  score.setIntensity(0.3, 5);
+  focus = -1; renderBack(); lockUntil = clock + 600; landDirty = true;
+  armHint(4.4);
+}
+function ignite(m, bell = true) {
+  if (bell) score.sfx('unlock');
+  if (reduceMotion) { m.lit = 1; return; }
+  tween(m, 'lit', 1, 0.45, { from: 0 });
+  tween(m, 'pop', 1, 0.6, { from: 0, ease: (u) => u });
+  m.flare = 1; tween(m, 'flare', 0, 1.1, { from: 1 });
+}
+function finishInstant() {
+  computeTargets(); settleClouds();
+  voyage = makeVoyage(journeyWaypoints()); boat.s = voyage.total; placeBoat();
+  intro.active = false; intro.names = 1;
+  document.body.classList.remove('intro-hud');
+}
+function placeBoat() {
+  if (!voyage) return;
+  const p = voyageAt(voyage, boat.s);
+  if (Math.hypot(p.x - boat.x, p.y - boat.y) > 0.4) boat.ang = Math.atan2((p.y - boat.y) * K, p.x - boat.x);
+  boat.x = p.x; boat.y = p.y;
+}
+
+// ───────────────────────── Completion: the clouds part ─────────────────────────
+function onComplete(evt) {
+  const L = evt.lesson, m = markOf.get(L.id);
+  const wasOpen = new Map(lobes.map((l) => [l, l.open]));
+  rebuildStates();
+  computeTargets();
+  partClouds(m.x, m.y, { delayPer: 0.0022, maxDelay: 0.8, dur: 1.25 });
+  // Newly opened hills colour in and pop up; so does the hill the lesson sits on.
+  for (const l of lobes) if (l.open && !wasOpen.get(l)) { tween(l, 'solidT', 1, 1.1, { delay: 0.25 }); tween(l, 'pop', 1, 0.7, { from: 0, delay: 0.25, ease: (u) => u }); }
+  tween(m.lobe, 'pop', 1, 0.6, { from: 0, ease: (u) => u });
+  // The boat sails a fresh leg to this hill's harbour.
+  const target = m.lobe.harbor;
+  if (Math.hypot(target[0] - boat.x, target[1] - boat.y) > 30) {
+    const way = [...journeyWaypoints().slice(0, -1), [boat.x, boat.y], target].slice(-2);
+    const leg = makeVoyage(way), base = voyage.total;
+    voyage = { pts: [...voyage.pts, ...leg.pts.slice(1)], cum: [...voyage.cum, ...leg.cum.slice(1).map((c) => c + base)], total: base + leg.total, stops: [...voyage.stops, base + leg.total] };
+    boatLeg = { s0: base, s1: voyage.total, t0: clock + 300, dur: 1300 };
+    later(0.3, () => score.sfx('step'));
+  }
+  evt.unlocked.forEach((u, i) => {
+    const um = markOf.get(u.id);
+    um.lit = 0; um.flare = 0;
+    later(0.75 + i * 0.3, () => ignite(um));
+  });
+  hypeUntil = clock + 2600;
+  score.setIntensity(0.95, 0.6);
+  landDirty = true;
+}
+let hypeUntil = 0;
+
+// ───────────────────────── HUD: explored → projected score → goal ─────────────────────────
+const $ = (id) => document.getElementById(id);
+const hud = { exp: $('hExp'), fill: $('hFill'), gap: $('hGap'), you: $('hYou'), flag: $('hFlag'), youL: $('hYouL'), togo: $('hToGo'), goal: $('hGoal') };
+const disp = { m: 0, score: 400 };
+let hudAt = 0, hudShown = -1;
+const LO = 400, HI = 1600;
+function updateHud(now) {
+  if (now - hudAt < 80) return;
+  hudAt = now;
+  const st = graph.stats();
+  const m = st.mastery;
+  disp.m += (m - disp.m) * (reduceMotion ? 1 : 0.3);
+  if (Math.abs(disp.m - m) < 0.0005) disp.m = m;
+  const s = projectedScore(disp.m), goal = st.goalScore;
+  if (s === hudShown && Math.abs(disp.m - m) < 0.0005) return;
+  hudShown = s;
+  const at = (v) => clamp((v - LO) / (HI - LO), 0, 1);
+  const tw = hud.fill.parentElement.clientWidth || 272, x = at(s) * tw, gx = at(goal) * tw;
+  hud.exp.textContent = pct(disp.m);
+  hud.fill.style.width = x + 'px';
+  hud.you.style.left = x + 'px';
+  hud.flag.style.left = gx + 'px';
+  hud.gap.style.left = x + 'px'; hud.gap.style.width = Math.max(0, gx - x - 2) + 'px';
+  hud.youL.textContent = `You · ${s}`;
+  hud.togo.textContent = s >= goal ? 'Goal reached' : `${goal - s} to go`;
+  hud.goal.textContent = `Goal · ${goal}`;
+  // Keep the two labels under the track apart and inside the card.
+  const yw = hud.youL.offsetWidth || 64, gw = hud.togo.offsetWidth || 64;
+  const yl = clamp(x - yw / 2, 0, tw - yw - gw - 8);
+  const gl = clamp(s >= goal ? tw - gw : (x + gx) / 2 - gw / 2, yl + yw + 8, tw - gw);
+  hud.youL.style.left = yl + 'px'; hud.togo.style.left = gl + 'px';
+}
+function nearestBeacon() {
+  const ref = pointer.in ? pointer : { x: VP.cx, y: VP.cy };
+  let best = null, bd = Infinity;
+  for (const m of marks) { if (m.leaf.state !== 'frontier' || m.lit < 0.5) continue; const d = Math.hypot(m.sx - ref.x, m.sy - ref.y); if (d < bd) { bd = d; best = m; } }
+  return best;
+}
+const backEl = $('back');
+backEl.addEventListener('click', () => { if (card.lesson) card.close(); goBack(); });
+function renderBack() { backEl.classList.toggle('show', focus >= 0); }
+const hintEl = $('hint');
+if (matchMedia('(pointer: coarse)').matches) hintEl.textContent = 'Tap an island to sail in. Drag over the clouds to peek.';
+let hintState = 0, hintArmed = 0;
+function showHint() { if (hintState) return; hintState = 1; hintEl.classList.add('show'); setTimeout(hideHint, 4000); }
+function hideHint() { if (hintState === 1) { hintState = 2; hintEl.classList.remove('show'); } }
+function armHint(sec) { hintArmed = performance.now(); setTimeout(() => { if (hintState === 0) showHint(); }, sec * 1000); }
+
+// ───────────────────────── Peek card ─────────────────────────
+const teaser = $('teaser'), tB = teaser.querySelector('b'), tSpan = teaser.querySelector('span');
+let teaserKey = '';
+function updateTeaser() {
+  let info = null;
+  if (lantern.s > 0.4 && pointer.in && !intro.active && !card.lesson) {
+    const pw = s2w(pointer.x, pointer.y, H_GRASS);
+    let best = null;
+    for (const l of lobes) { const g = lobeGap(l, pw.x, pw.y) * cam.z; if (g < 30 && (!best || g < best.g)) best = { l, g }; }
+    if (best) {
+      const t = best.l.topic, n = t.leafCount, locked = best.l.marks.filter((m) => m.leaf.state === 'locked').length;
+      if (!t.unlocked) info = { key: 'u' + t.id, title: t.label, line: `${n} lesson${n > 1 ? 's' : ''} under the clouds` };
+      else if (locked > 0) info = { key: 'f' + t.id, title: t.label, line: `${locked} more lesson${locked > 1 ? 's' : ''} under the clouds` };
+    } else if (pointerCover > 0.8) info = { key: 'sea', title: 'Open water', line: 'Nothing charted here yet.' };
+  }
+  if (!info) { if (teaserKey) { teaser.classList.remove('show'); teaserKey = ''; } return; }
+  if (info.key !== teaserKey) { teaserKey = info.key; tB.textContent = info.title; tSpan.textContent = info.line; teaser.classList.add('show'); }
+  const w = teaser.offsetWidth || 220, h = teaser.offsetHeight || 56, sr = document.querySelector('.score').getBoundingClientRect();
+  const x = clamp(pointer.x - w / 2, 16, W - w - 16);
+  let y = pointer.y - lantern.r * 0.8 - h - 8;
+  if (y < 16 || (x < sr.right + 8 && y < sr.bottom + 8)) y = pointer.y + lantern.r * 0.8 + 8;
+  teaser.style.left = x + 'px'; teaser.style.top = clamp(y, 16, H - h - 88) + 'px';
+}
+
+// ───────────────────────── Music follows curiosity ─────────────────────────
+let musicAt = 0;
+function music(now) {
+  if (!score.started || intro.active || now - musicAt < 200) return;
+  musicAt = now;
+  let near = Infinity;
+  if (pointer.in) for (const m of marks) if (m.leaf.state === 'frontier') near = Math.min(near, Math.hypot(m.sx - pointer.x, m.sy - pointer.y));
+  const beaconProx = pointer.in ? 1 - clamp(near / 260, 0, 1) : 0;
+  let target = 0.14 + (focus >= 0 ? 0.08 : 0) + 0.46 * lantern.s + 0.24 * beaconProx + (card.lesson ? 0.12 : 0);
+  if (now < hypeUntil) target = Math.max(target, 0.9);
+  score.setIntensity(clamp(target, 0, 1), now < hypeUntil ? 0.6 : 3.5);
+}
+
+// ───────────────────────── Input ─────────────────────────
+/** Beacons win: the nearest one within a generous radius snaps. */
+function markAt(x, y, touch = false) {
+  const snap = touch ? 36 : 28;
+  let best = null, bd = Infinity;
+  for (const m of marks) {
+    if (m.leaf.state !== 'frontier' || m.lit < 0.5) continue;
+    const d = Math.hypot(x - m.sx, y - (m.sy - m.r * 1.6));
+    if (d < Math.max(snap, m.r * 2.4) && d < bd) { bd = d; best = m; }
+  }
+  if (best) return best;
+  const det = markDetail();
+  for (const m of marks) {
+    const st = m.leaf.state;
+    if (st === 'frontier') continue;
+    if (st === 'mastered' && det < 0.5) continue;
+    if (st === 'locked' && lanternAt(m.sx, m.sy) < 0.3) continue;
+    const d = Math.hypot(x - m.sx, y - (m.sy - 10));
+    if (d < (touch ? 22 : 16) && d < bd) { bd = d; best = m; }
+  }
+  return best;
+}
+const islandAt = (x, y) => islands.find((isl) => groundGap(isl, x, y) <= 10) || null;
+function movePointer(x, y, now) {
+  const d = Math.hypot(x - pointer.x, y - pointer.y);
+  if (d > 2 && pointer.in) { if (hintState === 1) hideHint(); else if (hintState === 0 && hintArmed && now > hintArmed) hintState = 2; }
+  if (pointer.in && d > 0.5) { pointer.lastMoveAt = now; if (now >= lockUntil) pointer.travel += d; }
+  pointer.x = x; pointer.y = y; pointer.in = true;
+}
+function handleTap(x, y, touch) {
+  if (intro.active) { endIntro(true); return; }
+  hideHint();
+  const m = markAt(x, y, touch);
+  if (m) { card.open(m.leaf); return; }
+  if (card.lesson) { card.close(); return; }
+  const over = islandAt(x, y);
+  if (over && over.di !== focus) setFocus(over.di);
+  else if (!over && focus >= 0) goBack();
+}
+cv.addEventListener('pointerdown', (e) => {
+  pointer.down = true; pointer.type = e.pointerType; pointer.dx = e.clientX; pointer.dy = e.clientY;
+  if (e.pointerType === 'touch') { pointer.in = false; movePointer(e.clientX, e.clientY, performance.now()); }
+});
+cv.addEventListener('pointermove', (e) => { pointer.type = e.pointerType; if (e.pointerType === 'touch' && !pointer.down) return; movePointer(e.clientX, e.clientY, performance.now()); });
+cv.addEventListener('pointerleave', () => { if (pointer.type !== 'touch') pointer.in = false; });
+cv.addEventListener('pointercancel', () => { pointer.down = false; pointer.in = false; });
+cv.addEventListener('pointerup', (e) => {
+  pointer.down = false;
+  const moved = Math.hypot(e.clientX - pointer.dx, e.clientY - pointer.dy);
+  if (e.pointerType === 'touch') { pointer.in = false; if (moved > 14) return; }
+  handleTap(e.clientX, e.clientY, e.pointerType === 'touch');
+});
+addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { if (intro.active) endIntro(true); else if (!card.lesson) goBack(); }
+  if (e.key === 'Enter' && !card.lesson && !intro.active && document.activeElement === document.body) { const b = nearestBeacon(); if (b) card.open(b.leaf); }
+}, true);
+
+// ───────────────────────── Resize + loop ─────────────────────────
+function resize() {
+  W = innerWidth; H = innerHeight; DPR = Math.min(devicePixelRatio || 1, 2);
+  cv.width = landCv.width = Math.round(W * DPR); cv.height = landCv.height = Math.round(H * DPR);
+  lantern.r = clamp(Math.min(W, H) * 0.19, 105, 165);
+  if (portrait === null || (H > W * 1.05) !== portrait) {
+    layout();
+    computeTargets();
+    if (!intro.active) { settleClouds(); voyage = makeVoyage(journeyWaypoints()); boat.s = voyage.total; placeBoat(); }
+    snapCam = true;
+  }
+  VP = viewport(); landDirty = true; hudShown = -1;
+}
+addEventListener('resize', resize);
+resize();
+// Before Begin the whole chart sits under cloud.
+for (const p of puffs) p.cov = 1;
+voyage = makeVoyage(journeyWaypoints()); boat.s = voyage.total; placeBoat();
+renderBack();
+
+let last = performance.now();
+function tick(now) {
+  const dt = Math.min(0.05, Math.max(0, now - last) / 1000);
+  last = clock = now;
+  VP = viewport();
+  runTweens(now);
+  if (intro.active) updateIntro(now);
+  if (boatLeg) {
+    const u = clamp((now - boatLeg.t0) / boatLeg.dur, 0, 1);
+    boat.s = lerp(boatLeg.s0, boatLeg.s1, easeInOutSine(u)); boat.sailing = u > 0 && u < 1;
+    placeBoat();
+    if (u >= 1) { boatLeg = null; boat.sailing = false; score.sfx('step'); }
+  }
+  nav(now);
+  if (!camTarget) camTarget = overviewFrame();
+  animateCam(dt);
+  // Lantern: only where clouds cover; the first thinning plays the peek shimmer.
+  if (pointer.in && !intro.active) { const p = s2w(pointer.x, pointer.y, H_GRASS); pointerCover = 1 - clearAt(p.x, p.y); } else pointerCover = 0;
+  const lt = pointer.in && !intro.active && !card.lesson ? sstep(0.3, 0.8, pointerCover) : 0;
+  lantern.s += (lt - lantern.s) * (1 - Math.exp(-dt * (reduceMotion ? 30 : 7)));
+  if (lantern.s > 0.35 && !lantern.on) { lantern.on = true; if (now - lantern.peekAt > 1500) { score.sfx('peek'); lantern.peekAt = now; } }
+  else if (lantern.s < 0.15) lantern.on = false;
+  // Hover lands this frame.
+  for (const m of marks) { const s = w2s(m.x, m.y, m.h); m.sx = s.x; m.sy = s.y; if (m.leaf.state !== 'frontier') m.r = 8; else if (!m.r) m.r = 9; }
+  const live = pointer.in && pointer.type !== 'touch' && !intro.active;
+  const hm = live ? markAt(pointer.x, pointer.y) : null;
+  const hi = live && !hm && focus < 0 && !card.lesson ? islandAt(pointer.x, pointer.y) : null;
+  if (hm !== hoverMark) { hoverMark = hm; if (hm && hm.leaf.state === 'frontier') score.sfx('hover'); }
+  if (hi !== hoverIsland) { hoverIsland = hi; if (hi) score.sfx('hover'); }
+  for (const m of marks) m.hover += ((m === hoverMark ? 1 : 0) - m.hover) * (1 - Math.exp(-dt * 24));
+  const overBoat = pointer.in && !intro.active && !hm && Math.hypot(pointer.x - (boat.sx || 0), pointer.y - (boat.sy || 0)) < 22;
+  boatHover += ((overBoat ? 1 : 0) - boatHover) * (1 - Math.exp(-dt * 8));
+  cv.style.cursor = hm || hi || overBoat ? 'pointer' : 'default';
+
+  setScreen(); ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+  drawWater(now);
+  drawFoamRipple(now);
+  drawLand(now);
+  drawVoyageHint();
+  drawBoat(now);
+  const c0 = performance.now();
+  drawClouds(now);
+  perf.clouds += performance.now() - c0;
+  drawOverlay(now);
+  updateHud(now);
+  updateTeaser();
+  music(now);
+}
+let paused = false;
+const perf = { all: 0, clouds: 0, n: 0 };
+function frame(now) {
+  if (!paused) {
+    const t0 = performance.now(); tick(now); perf.all += performance.now() - t0; perf.n++;
+    if (params.has('perf') && perf.n === 60) { console.log(`frame ${(perf.all / 60).toFixed(1)}ms · clouds ${(perf.clouds / 60).toFixed(1)}ms`); perf.all = perf.clouds = perf.n = 0; }
+  }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+// ───────────────────────── Begin + QA demos ─────────────────────────
+function begin() {
+  if (Q.demo || Q.intro === '0' || reduceMotion) {
+    finishInstant();
+    if (reduceMotion && !Q.demo) caption(LINE_EDGE, 4200);
+    if (!Q.demo) armHint(reduceMotion ? 4.4 : 0.6);
+    runDemo();
+  } else {
+    startIntro();
+    if (Q.t) { intro.t0 -= Q.t * 1000; }
+  }
+}
+function runDemo() {
+  const frac = (v, total) => { const n = parseFloat(v); return n <= 1 ? n * total : n; };
+  if (Q.d != null && Q.d >= 0 && Q.d < domains.length) { setFocus(Q.d, true); snapCam = true; }
+  if (Q.demo === 'peek') {
+    pointer.x = Q.px != null ? frac(Q.px, W) : W * 0.82; pointer.y = Q.py != null ? frac(Q.py, H) : H * 0.4;
+    pointer.in = true; pointer.type = 'mouse'; lockUntil = clock + 1e9;
+  } else if (Q.demo === 'island') {
+    if (Q.d == null) { setFocus(0, true); snapCam = true; }
+  } else if (Q.demo === 'complete' || Q.demo === 'beacon') {
+    const opensTopic = (l) => { const t = graph.pathTo(l)[2], nx = t.parent.children[t.index + 1]; return nx && !nx.unlocked && t.m + (1 - l.progress) / t.leafCount >= 0.5; };
+    const pool = graph.frontierLessons().filter((l) => Q.d == null || l.domainIndex === Q.d);
+    const pick = Q.lesson ? leaves.find((l) => String(l.id) === Q.lesson && l.state === 'frontier') : pool.find(opensTopic) || pool[0];
+    if (!pick) return;
+    setFocus(pick.domainIndex, true); snapCam = true;
+    card.open(pick);
+    if (Q.demo === 'complete') later(Q.cd, () => card.el.querySelector('.actions .kg-btn.primary')?.click());
+  }
+}
+window.__chart = { overviewFrame, islandFrame, graph, cam, islands, lobes, marks, puffs, get voyage() { return voyage; }, get focus() { return focus; }, setFocus, card, pause(v) { paused = v; last = performance.now(); }, endIntro };
+</script>
+</body>
+</html>

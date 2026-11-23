@@ -1,0 +1,1779 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Second Brain</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="../shared/dolphin.css">
+<style>
+  :root { color-scheme: dark; }
+  html, body { overflow: hidden; }
+  body {
+    color: var(--foam);
+    background: var(--night-deep);
+  }
+  #base, #blur, #crisp { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  #base { pointer-events: none; }
+  #blur { filter: blur(6px); pointer-events: none; }
+  #crisp { touch-action: none; }
+
+  /* Status (top-left): the one element on screen at rest. Crumbs join it only when zoomed. */
+  .status {
+    position: fixed; top: 24px; left: 24px; z-index: 20; display: grid; justify-items: start; pointer-events: none;
+    opacity: 0; transform: translateY(-6px); transition: opacity 700ms ease, transform 700ms cubic-bezier(.2,.9,.3,1);
+    text-shadow: 0 1px 14px rgba(5, 22, 54, 0.7);
+  }
+  .status.show { opacity: 1; transform: none; }
+  .status-main { display: flex; align-items: baseline; gap: 8px; white-space: nowrap; }
+  .status-main b { font-family: var(--font-head); font-weight: normal; font-size: 32px; line-height: 1; color: var(--foam); display: inline-block; }
+  .status-main span { font-weight: 700; font-size: 16px; color: var(--mist); }
+  .status-sub { margin-top: 8px; font-size: 13px; font-weight: 700; color: var(--cloud); }
+  .status-sub b { color: var(--foam); display: inline-block; }
+  .pop { animation: pop 520ms cubic-bezier(.2,.9,.3,1.4); }
+  @keyframes pop { 0% { transform: scale(1); } 35% { transform: scale(1.18); } 100% { transform: scale(1); } }
+  .hint { margin-top: 8px; font-size: 13px; font-weight: 600; color: var(--cloud); transition: opacity 900ms ease; }
+  .hint.gone { opacity: 0; }
+  .crumbs { margin-top: 16px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; pointer-events: auto; }
+  .crumbs:empty { display: none; }
+  .crumb {
+    font: 800 13px/1 var(--font-body); color: var(--foam); background: rgba(10, 35, 79, 0.62);
+    border: 1.5px solid rgba(158, 223, 255, 0.18); border-radius: 999px; padding: 8px 12px; cursor: pointer;
+    box-shadow: 0 3px 0 rgba(0, 0, 0, 0.3); display: inline-flex; align-items: center; gap: 7px; text-shadow: none;
+    transition: transform 120ms ease, background 150ms ease;
+  }
+  .crumb:hover { transform: translateY(1px); }
+  .crumb i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .crumb[aria-current="true"] { background: var(--wave-3); border-color: var(--wave-shadow); box-shadow: 0 3px 0 var(--wave-shadow); }
+  .crumb:focus-visible { outline: 3px solid rgba(95, 198, 247, 0.5); outline-offset: 2px; }
+  .crumb-sep { color: var(--cloud); font-weight: 800; opacity: 0.7; }
+
+  /* Scan readout: one plain line during the intro */
+  .readout {
+    position: fixed; left: 50%; top: 24px; transform: translate(-50%, -8px); z-index: 21; pointer-events: none;
+    font: 700 13px/1.2 var(--font-body); color: var(--mist); text-shadow: 0 1px 12px rgba(5, 22, 54, 0.8);
+    opacity: 0; transition: opacity 500ms ease, transform 500ms ease; white-space: nowrap;
+  }
+  .readout.show { opacity: 1; transform: translate(-50%, 0); }
+
+  /* Hover tooltip */
+  .tip {
+    position: fixed; z-index: 25; pointer-events: none; max-width: 240px; left: 0; top: 0;
+    background: rgba(10, 35, 79, 0.96); color: var(--foam); border: 1px solid rgba(158, 223, 255, 0.24);
+    border-radius: 12px; padding: 8px 12px; font-size: 13px; font-weight: 700; line-height: 1.35;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3); opacity: 0; transition: opacity 90ms ease;
+  }
+  .tip.show { opacity: 1; }
+
+  /* The one recommended next lesson: a real button attached to its neuron. */
+  .next-pill {
+    position: fixed; left: 0; top: 0; z-index: 22; height: 32px; box-sizing: border-box; display: inline-flex; align-items: center; gap: 4px;
+    padding: 0 8px 0 12px; border-radius: 999px; border: 2px solid var(--sun-shadow); background: var(--sun); color: var(--ink);
+    font: 800 13px/1 var(--font-body); white-space: nowrap; max-width: 260px; cursor: pointer;
+    box-shadow: 0 3px 0 var(--sun-shadow); opacity: 0; pointer-events: none; will-change: transform;
+    transition: opacity 220ms ease, box-shadow 140ms ease, filter 140ms ease;
+  }
+  .next-pill span { overflow: hidden; text-overflow: ellipsis; }
+  .next-pill svg { width: 16px; height: 16px; flex: none; }
+  .next-pill.show { opacity: 1; pointer-events: auto; }
+  .next-pill[data-state="progress"] { background: #FF9F43; border-color: #D9792A; box-shadow: 0 3px 0 #D9792A; }
+  .next-pill.hot { filter: brightness(1.06); box-shadow: 0 3px 0 var(--sun-shadow), 0 0 0 4px rgba(255, 244, 78, 0.28); }
+  .next-pill[data-state="progress"].hot { box-shadow: 0 3px 0 #D9792A, 0 0 0 4px rgba(255, 159, 67, 0.3); }
+  .next-pill:focus-visible { outline: 3px solid rgba(95, 198, 247, 0.6); outline-offset: 2px; }
+  .tip b { display: block; font-weight: 800; font-size: 13px; }
+  .tip .st { display: flex; align-items: center; gap: 8px; margin-top: 4px; font-weight: 700; font-size: 13px; }
+  .tip .st i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; }
+  .tip .act { display: block; margin-top: 4px; color: var(--sun); font-size: 13px; font-weight: 800; }
+
+  @media (max-width: 700px) {
+    .status { top: 16px; left: 16px; right: 16px; }
+    .crumb { font-size: 12px; padding: 7px 10px; }
+    .readout { top: 16px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .status, .readout, .tip, .hint, .next-pill { transition: none; }
+    .pop { animation: none; }
+  }
+</style>
+</head>
+<body>
+<canvas id="base" aria-hidden="true"></canvas>
+<canvas id="blur" aria-hidden="true"></canvas>
+<canvas id="crisp" role="img" aria-label="Your second brain: every SAT concept is a neuron inside a brain region. Move the pointer toward a region to zoom in, and away to zoom out."></canvas>
+
+<header class="status" id="hud" aria-live="polite">
+  <div class="status-main"><b id="hudFiring">0</b><span>/ <span id="hudTotal">89</span> neurons firing</span></div>
+  <div class="status-sub">Projected score <b id="hudScore">400</b></div>
+  <div class="hint" id="hint" hidden>Move toward a region to zoom in.</div>
+  <nav class="crumbs" id="crumbs" aria-label="Brain path"></nav>
+</header>
+
+<div class="readout" id="readout" aria-live="polite"><span id="roText">Mapping your SAT knowledge…</span></div>
+<div class="tip" id="tip"></div>
+<button class="next-pill" id="nextPill" type="button"><span id="nextText">Next</span><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3.5 10.5 8 6 12.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+
+<script type="module">
+/*
+ * Sound design — Second Brain
+ * Music: pulsing analog synth over a slow heartbeat; warm, curious, faintly clinical (an MRI room hum
+ *   underneath). Starts as a low pad + heartbeat while the scan runs, swells into a driving arpeggio at
+ *   the light-up, then settles into a calm pulse. setIntensity follows how much of the brain is firing
+ *   and how deep you have zoomed; finishing a lesson gives it a short lift.
+ * SFX (score.sfx), each fired on the frame its visual happens:
+ *   hover    – soft synaptic click, dry and short (pointer reaches a neuron, or leans into a lobe/topic)
+ *   select   – glassy tap with a small upward lift (lesson card opens)            [lesson-card.js]
+ *   back     – the same tap, lower and softer (Esc, breadcrumb, closing the card)
+ *   zoomIn   – airy upward whoosh with a faint electric shimmer (camera dives into a lobe or topic)
+ *   zoomOut  – the same whoosh falling and darker (camera pulls back out)
+ *   start    – short charge-up hum, ~0.9s (Start lesson pressed)                  [lesson-card.js]
+ *   complete – electric surge + bright chime (the neuron ignites)                 [lesson-card.js]
+ *   unlock   – gentle rising two-note spark (a dormant neuron wakes and starts to flicker)
+ *   riser    – ~2.2s scanner sweep building tension (scan done, brain charging)
+ *   intro    – deep sub hit + bright neural crackle (the whole brain lights up at once)
+ *   step     – tiny MRI blip (the scanline reveals a neuron; a cascade pulse lands on a neighbour)
+ */
+import { createGraph, DOMAIN_HUES, pct, clamp } from '../shared/graph.js';
+import { mountChrome, params } from '../shared/chrome.js';
+import { createLessonCard } from '../shared/lesson-card.js';
+
+// QA: ?debug=1 records frame stats and errors into the DOM (read with --dump-dom).
+const dbgEl = new URLSearchParams(location.search).has('debug') ? Object.assign(document.createElement('pre'), { id: 'dbg', hidden: true }) : null;
+if (dbgEl) { document.body.append(dbgEl); addEventListener('error', (e) => { dbgEl.textContent += `ERROR ${e.message} @${e.lineno}:${e.colno}\n`; }); }
+// ════════════════════════ Basics ════════════════════════
+const TAU = Math.PI * 2;
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const lerp = (a, b, t) => a + (b - a) * t;
+const smooth = (t) => t * t * (3 - 2 * t);
+const easeInOut = (t) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2);
+function mulberry32(a) {
+  return () => { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+}
+const rand = mulberry32(0x5EC0B2A1);   // layout (deterministic)
+const frand = Math.random;             // live simulation
+function hex(c) { const v = parseInt(c.slice(1), 16); return [(v >> 16) & 255, (v >> 8) & 255, v & 255]; }
+function mix(a, b, t) { const A = hex(a), B = hex(b); return '#' + A.map((v, i) => Math.round(v + (B[i] - v) * t).toString(16).padStart(2, '0')).join(''); }
+function rgba(c, a) { const [r, g, b] = hex(c); return `rgba(${r},${g},${b},${a})`; }
+function hash2(i, j) { let h = (Math.imul(i, 374761393) + Math.imul(j, 668265263)) | 0; h = Math.imul(h ^ (h >>> 13), 1274126177); h ^= h >>> 16; return (h >>> 0) / 4294967296; }
+function vnoise(x, y) {
+  const i = Math.floor(x), j = Math.floor(y), fx = x - i, fy = y - j;
+  const u = fx * fx * (3 - 2 * fx), v = fy * fy * (3 - 2 * fy);
+  return lerp(lerp(hash2(i, j), hash2(i + 1, j), u), lerp(hash2(i, j + 1), hash2(i + 1, j + 1), u), v) * 2 - 1;
+}
+
+const C = {
+  foam: '#FFFFFC', mist: '#D9E4F2', cloud: '#B7C0CC', wave1: '#9EDFFF', wave2: '#5FC6F7', wave3: '#2F9AE6',
+  night: '#103B84', nightDeep: '#0A2B64', nightInk: '#0A234F', abyss: '#051636', sun: '#FFF44E', sunShadow: '#E8BE00', coral: '#E35D6A',
+};
+const HEAD = '"VAG Rundschrift D", "Manrope", system-ui, sans-serif';
+const BODY = '"Manrope", system-ui, sans-serif';
+
+// ════════════════════════ Geometry helpers ════════════════════════
+function catmull(pts, seg, closed) {
+  const out = [], n = pts.length, last = closed ? n : n - 1;
+  const P = (i) => (closed ? pts[(i + n) % n] : pts[clamp(i, 0, n - 1)]);
+  for (let i = 0; i < last; i++) {
+    const p0 = P(i - 1), p1 = P(i), p2 = P(i + 1), p3 = P(i + 2);
+    for (let s = 0; s < seg; s++) {
+      const t = s / seg, t2 = t * t, t3 = t2 * t;
+      out.push([0, 1].map((k) => 0.5 * (2 * p1[k] + (-p0[k] + p2[k]) * t + (2 * p0[k] - 5 * p1[k] + 4 * p2[k] - p3[k]) * t2 + (-p0[k] + 3 * p1[k] - 3 * p2[k] + p3[k]) * t3)));
+    }
+  }
+  if (!closed) out.push(pts[n - 1].slice());
+  return out;
+}
+function pip(poly, x, y) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const xi = poly[i][0], yi = poly[i][1], xj = poly[j][0], yj = poly[j][1];
+    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+function polyPath(poly, close = true) { const p = new Path2D(); poly.forEach(([x, y], i) => (i ? p.lineTo(x, y) : p.moveTo(x, y))); if (close) p.closePath(); return p; }
+function smoothInto(path, P) {
+  path.moveTo(P[0][0], P[0][1]);
+  for (let i = 1; i < P.length - 1; i++) path.quadraticCurveTo(P[i][0], P[i][1], (P[i][0] + P[i + 1][0]) / 2, (P[i][1] + P[i + 1][1]) / 2);
+  path.lineTo(P[P.length - 1][0], P[P.length - 1][1]);
+}
+
+// ════════════════════════ Brain anatomy (world units, side view, frontal pole on the left) ════════════════════════
+const CEREBRUM = catmull([
+  [-478, 8], [-468, -82], [-428, -172], [-358, -248], [-258, -306], [-138, -342], [-8, -354], [122, -343], [242, -306],
+  [346, -242], [425, -152], [472, -52], [490, 30], [480, 104], [432, 150], [344, 164], [254, 184], [152, 220], [42, 238],
+  [-68, 236], [-160, 216], [-226, 180], [-258, 140], [-242, 108], [-280, 95], [-364, 84], [-436, 58],
+], 10, true);
+const CB = { cx: 358, cy: 222, rx: 150, ry: 84, flat: 0.46, rot: 0.05 };
+function cbPoint(theta, s, sy = s) {
+  const sn = Math.sin(theta);
+  const x = CB.rx * s * Math.cos(theta), y = CB.ry * sy * sn * (sn < 0 ? CB.flat : 1);
+  const c = Math.cos(CB.rot), si = Math.sin(CB.rot);
+  return [CB.cx + x * c - y * si, CB.cy + x * si + y * c];
+}
+const CEREBELLUM = Array.from({ length: 90 }, (_, i) => cbPoint((i / 90) * TAU, 1));
+const STEM = catmull([[150, 205], [208, 208], [228, 246], [222, 300], [212, 352], [210, 410], [166, 410], [164, 352], [150, 296], [138, 248]], 8, true);
+
+const SYL_A = [[-242, 108], [-200, 99], [-158, 86], [-118, 74]];          // notch → junction (exclusive)
+const JUNCTION = [-80, 61];
+const SYL_B = [[-36, 52], [12, 40], [62, 25], [112, 6], [165, -20]];      // junction (exclusive) → end
+const SYLVIAN = [...SYL_A, JUNCTION, ...SYL_B];
+const SYLVIAN_RAMUS = [[150, -12], [184, -40], [196, -70], [214, -96]];
+const CENTRAL = [[36, -356], [30, -322], [15, -290], [20, -254], [4, -216], [-12, -180], [-6, -146], [-24, -110], [-42, -72], [-38, -36], [-56, 4], [-66, 34], JUNCTION];
+const PO = [[348, -250], [322, -186], [338, -118], [312, -52], [316, 0], [338, 56], [324, 112], [342, 162]];
+const TP = [[165, -20], [204, -2], [246, -20], [284, 8], [316, 0]];
+const FAR = 3000;
+// Lobe borders follow the same smoothed curves the fissures are drawn with, so tints meet the lines exactly.
+const smoothLine = (pts) => catmull(pts, 6, false);
+const CS_S = smoothLine(CENTRAL), SA_S = smoothLine([...SYL_A, JUNCTION]), SB_S = smoothLine([JUNCTION, ...SYL_B]);
+const PO_TOP = smoothLine(PO.slice(0, 5)), PO_LOW = smoothLine(PO.slice(4)), TP_S = smoothLine(TP);
+const POLY = {
+  frontal: [[-FAR, -FAR], [40, -FAR], ...CS_S, ...SA_S.slice().reverse(), [-FAR, 150]],
+  parietal: [[40, -FAR], [352, -FAR], ...PO_TOP, ...TP_S.slice().reverse(), ...SB_S.slice().reverse(), ...CS_S.slice().reverse()],
+  occipital: [[352, -FAR], [FAR, -FAR], [FAR, FAR], [342, FAR], ...PO_LOW.slice().reverse(), ...PO_TOP.slice().reverse()],
+  temporal: [[-FAR, 150], ...SA_S, ...SB_S, ...TP_S, ...PO_LOW, [342, FAR], [-FAR, FAR]],
+};
+const BRAIN_BOX = [-490, -360, 500, 400];
+
+const PATHS = {
+  cerebrum: polyPath(CEREBRUM), cerebellum: polyPath(CEREBELLUM), stem: polyPath(STEM),
+  notCerebrum: (() => { const p = new Path2D(); p.rect(-FAR, -FAR, 2 * FAR, 2 * FAR); p.addPath(polyPath(CEREBRUM)); p.addPath(polyPath(CEREBELLUM)); return p; })(),
+};
+const fissure = (pts) => { const p = new Path2D(); smoothInto(p, catmull(pts, 6, false)); return p; };
+const linePath = (...lines) => { const p = new Path2D(); for (const L of lines) smoothInto(p, L); return p; };
+PATHS.deep = linePath([...SA_S, ...SB_S.slice(1)], smoothLine(SYLVIAN_RAMUS), CS_S.slice(3));
+PATHS.shallow = linePath(PO_TOP, TP_S, PO_LOW);
+
+const REGIONS = [
+  { key: 'frontal', domain: 'Algebra', lobe: 'Frontal lobe', poly: POLY.frontal, label: { L: [-446, -214], align: 'right' }, phone: { L: [-300, -334], align: 'above' } },
+  { key: 'parietal', domain: 'Advanced Math', lobe: 'Parietal lobe', poly: POLY.parietal, label: { L: [170, -370], align: 'above' }, phone: { L: [30, -380], align: 'above' } },
+  { key: 'occipital', domain: 'Problem Solving & Data', lobe: 'Occipital lobe', poly: POLY.occipital, label: { L: [504, -70], align: 'left' }, phone: { L: [436, -266], align: 'above' } },
+  { key: 'cerebellum', domain: 'Geometry & Trig', lobe: 'Cerebellum', poly: CEREBELLUM, label: { L: [524, 252], align: 'left' }, phone: { L: [372, 320], align: 'below' } },
+  { key: 'temporal', domain: 'Reading & Writing', lobe: 'Temporal lobe', poly: POLY.temporal, label: { L: [-70, 262], align: 'below' }, phone: { L: [-110, 252], align: 'below' } },
+];
+const REG = Object.fromEntries(REGIONS.map((R) => [R.domain, R]));
+function inRegion(R, x, y) { return R.key === 'cerebellum' ? pip(CEREBELLUM, x, y) : pip(CEREBRUM, x, y) && pip(R.poly, x, y); }
+function regionAt(x, y) {
+  if (pip(CEREBELLUM, x, y)) return REG['Geometry & Trig'];
+  if (!pip(CEREBRUM, x, y)) return null;
+  for (const R of REGIONS) if (R.key !== 'cerebellum' && pip(R.poly, x, y)) return R;
+  return null;
+}
+const OFFS = Array.from({ length: 8 }, (_, i) => [Math.cos((i / 8) * TAU), Math.sin((i / 8) * TAU)]);
+function inRegionDeep(R, x, y, m) { if (!inRegion(R, x, y)) return false; for (const [ox, oy] of OFFS) if (!inRegion(R, x + ox * m, y + oy * m)) return false; return true; }
+
+// Region samples (for centroids, boxes, k-means and the decor network).
+const SAMPLE = 9;
+for (const R of REGIONS) { R.samples = []; R.deep = []; }
+for (let y = BRAIN_BOX[1]; y <= 330; y += SAMPLE) {
+  for (let x = BRAIN_BOX[0]; x <= BRAIN_BOX[2]; x += SAMPLE) {
+    const jx = x + (rand() - 0.5) * 4, jy = y + (rand() - 0.5) * 4;
+    const R = regionAt(jx, jy);
+    if (!R) continue;
+    R.samples.push([jx, jy]);
+    if (inRegionDeep(R, jx, jy, 16)) R.deep.push([jx, jy]);
+  }
+}
+for (const R of REGIONS) {
+  let sx = 0, sy = 0, x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const [x, y] of R.samples) { sx += x; sy += y; x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+  R.cx = sx / R.samples.length; R.cy = sy / R.samples.length;
+  R.area = R.samples.length * SAMPLE * SAMPLE;
+  R.rad = Math.sqrt(R.area / Math.PI);
+  R.box = [x0 - 6, y0 - 6, x1 + 6, y1 + 6];
+  R.hue = DOMAIN_HUES[R.domain];
+  R.light = mix(R.hue, C.foam, 0.45);
+  R.path = polyPath(R.poly);
+  Object.assign(R, { rv: 1, rs: 1, tRv: 1, tRs: 1, dm: 0, flare: 0, seen: false });
+}
+
+// Gyri: iso-contours of a domain-warped noise field (marching squares), chained and smoothed, split by region.
+function buildGyri() {
+  const cell = 6, x0 = -486, y0 = -362, nx = Math.ceil(982 / cell), ny = Math.ceil(612 / cell), S = 60;
+  const f = (x, y) => {
+    const wx = vnoise(x / (S * 1.9) + 11.3, y / (S * 1.9) + 3.1), wy = vnoise(x / (S * 1.9) + 7.7, y / (S * 1.9) + 19.2);
+    return vnoise(x / S + 1.3 * wx, y / S + 1.3 * wy) + 0.28 * vnoise(x / (S * 0.45) + 40, y / (S * 0.45) + 9);
+  };
+  const V = new Float32Array((nx + 1) * (ny + 1));
+  for (let j = 0; j <= ny; j++) for (let i = 0; i <= nx; i++) V[j * (nx + 1) + i] = f(x0 + i * cell, y0 + j * cell);
+  const val = (i, j) => V[j * (nx + 1) + i];
+  const hId = (i, j) => (j * (nx + 1) + i) * 2, vId = (i, j) => (j * (nx + 1) + i) * 2 + 1;
+  const cache = new Map();
+  const ept = (id) => {
+    let p = cache.get(id);
+    if (p) return p;
+    const k = id >> 1, i = k % (nx + 1), j = (k / (nx + 1)) | 0;
+    if (id & 1) { const a = val(i, j), b = val(i, j + 1), t = a / (a - b); p = [x0 + i * cell, y0 + (j + t) * cell]; }
+    else { const a = val(i, j), b = val(i + 1, j), t = a / (a - b); p = [x0 + (i + t) * cell, y0 + j * cell]; }
+    cache.set(id, p); return p;
+  };
+  const byRegion = new Map();
+  const add = (a, b) => {
+    const pa = ept(a), pb = ept(b), R = regionAt((pa[0] + pb[0]) / 2, (pa[1] + pb[1]) / 2);
+    if (!R || R.key === 'cerebellum') return;
+    if (!byRegion.has(R)) byRegion.set(R, []);
+    byRegion.get(R).push([a, b]);
+  };
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+    const tl = val(i, j), tr = val(i + 1, j), br = val(i + 1, j + 1), bl = val(i, j + 1);
+    const c = (tl > 0 ? 8 : 0) | (tr > 0 ? 4 : 0) | (br > 0 ? 2 : 0) | (bl > 0 ? 1 : 0);
+    if (c === 0 || c === 15) continue;
+    const T = hId(i, j), Rt = vId(i + 1, j), B = hId(i, j + 1), L = vId(i, j);
+    const ctr = (tl + tr + br + bl) / 4;
+    switch (c) {
+      case 1: case 14: add(L, B); break;
+      case 2: case 13: add(B, Rt); break;
+      case 3: case 12: add(L, Rt); break;
+      case 4: case 11: add(T, Rt); break;
+      case 6: case 9: add(T, B); break;
+      case 7: case 8: add(L, T); break;
+      case 5: if (ctr > 0) { add(L, T); add(B, Rt); } else { add(L, B); add(T, Rt); } break;
+      case 10: if (ctr > 0) { add(T, Rt); add(L, B); } else { add(L, T); add(B, Rt); } break;
+    }
+  }
+  for (const [R, list] of byRegion) {
+    const adj = new Map();
+    list.forEach((s, k) => { for (const e of s) { let a = adj.get(e); if (!a) adj.set(e, (a = [])); a.push(k); } });
+    const used = new Uint8Array(list.length), path = new Path2D();
+    const step = (end) => { const cand = (adj.get(end) || []).find((q) => !used[q]); if (cand === undefined) return null; used[cand] = 1; const s = list[cand]; return s[0] === end ? s[1] : s[0]; };
+    for (let k = 0; k < list.length; k++) {
+      if (used[k]) continue;
+      used[k] = 1;
+      const fwd = [list[k][1]], back = [];
+      for (let e = step(fwd[0]); e !== null; e = step(e)) fwd.push(e);
+      for (let e = step(list[k][0]); e !== null; e = step(e)) back.push(e);
+      const P = [...back.reverse(), list[k][0], ...fwd].map(ept);
+      let len = 0;
+      for (let i = 1; i < P.length; i++) len += Math.hypot(P[i][0] - P[i - 1][0], P[i][1] - P[i - 1][1]);
+      if (len < 70 || P.length < 3) continue;
+      smoothInto(path, P);
+    }
+    R.gyri = path;
+  }
+  // Cerebellum folia: concentric open arcs.
+  const cbR = REG['Geometry & Trig'], fol = new Path2D();
+  for (let k = 0; k < 8; k++) {
+    const sx = 0.92 - k * 0.05, sy = 0.86 - k * 0.1, P = [];
+    for (let th = -0.18; th <= Math.PI + 0.18; th += 0.04) P.push(cbPoint(th, sx, sy));
+    smoothInto(fol, P);
+  }
+  cbR.gyri = fol;
+}
+buildGyri();
+
+// ════════════════════════ Graph → neurons ════════════════════════
+const graph = createGraph();
+const root = graph.root;
+const NB = new Map();
+const lessons = [];
+const topics = [];
+const leafGroupsOf = (n) => (n.children.length && n.children.every((c) => !c.children.length) ? [n] : n.children.flatMap(leafGroupsOf));
+const topicOf = (l) => graph.pathTo(l)[2];
+
+function kmeans(points, k, iters = 26) {
+  const cents = [points[Math.floor(rand() * points.length)].slice()];
+  while (cents.length < k) {
+    let sum = 0;
+    const d2 = points.map((p) => { let m = Infinity; for (const c of cents) m = Math.min(m, (p[0] - c[0]) ** 2 + (p[1] - c[1]) ** 2); sum += m; return m; });
+    let r = rand() * sum, idx = 0;
+    for (; idx < points.length - 1; idx++) { r -= d2[idx]; if (r <= 0) break; }
+    cents.push(points[idx].slice());
+  }
+  const assign = new Int32Array(points.length);
+  for (let it = 0; it < iters; it++) {
+    const sx = new Float64Array(k), sy = new Float64Array(k), cnt = new Float64Array(k);
+    points.forEach((p, i) => {
+      let b = 0, bd = Infinity;
+      for (let c = 0; c < k; c++) { const d = (p[0] - cents[c][0]) ** 2 + (p[1] - cents[c][1]) ** 2; if (d < bd) { bd = d; b = c; } }
+      assign[i] = b; sx[b] += p[0]; sy[b] += p[1]; cnt[b]++;
+    });
+    for (let c = 0; c < k; c++) if (cnt[c]) cents[c] = [sx[c] / cnt[c], sy[c] / cnt[c]];
+  }
+  return { cents, assign };
+}
+
+function makeNeuron(l, R) {
+  const N = {
+    lesson: true, n: l, R, T: null, G: null, x: 0, y: 0, bx: 0, by: 0, adj: [], seed: rand(),
+    spike: 0, charge: 0, ping: 0, shock: 0, ignite: 0, wake: 0, hl: 0, rec: 0, lastFire: -1e9, fireAt: 0, hold: null, holdUntil: 0,
+    revealed: false, sx: 0, sy: 0, rpx: 4, dend: [],
+  };
+  const k = 5 + Math.floor(rand() * 2);
+  for (let i = 0; i < k; i++) N.dend.push({ a: (i / k) * TAU + (rand() - 0.5) * 0.9, l: 1.7 + rand() * 1.3, f: (rand() - 0.5) * 1.4 });
+  NB.set(l.id, N); lessons.push(N);
+  return N;
+}
+
+for (const R of REGIONS) {
+  const dom = graph.domains.find((d) => d.label === R.domain);
+  R.dom = dom; dom.R = R;
+  const groups = leafGroupsOf(dom);
+  const pts = R.deep;
+  const { cents, assign } = kmeans(pts, groups.length);
+  // Visit cluster cells along a nearest-neighbour path so consecutive topics sit side by side.
+  const left = cents.map((_, i) => i);
+  let cur = left.reduce((b, i) => (Math.hypot(cents[i][0] - R.cx, cents[i][1] - R.cy) > Math.hypot(cents[b][0] - R.cx, cents[b][1] - R.cy) ? i : b), 0);
+  const order = [];
+  while (left.length) {
+    left.splice(left.indexOf(cur), 1); order.push(cur);
+    if (!left.length) break;
+    cur = left.reduce((b, i) => (Math.hypot(cents[i][0] - cents[cur][0], cents[i][1] - cents[cur][1]) < Math.hypot(cents[b][0] - cents[cur][0], cents[b][1] - cents[cur][1]) ? i : b), left[0]);
+  }
+  let prevC = [R.cx, R.cy];
+  groups.forEach((g, gi) => {
+    const ci = order[gi], c = cents[ci];
+    const cell = pts.filter((_, i) => assign[i] === ci);
+    let sxx = 0, syy = 0, sxy = 0;
+    for (const p of cell) { const dx = p[0] - c[0], dy = p[1] - c[1]; sxx += dx * dx; syy += dy * dy; sxy += dx * dy; }
+    const ang = 0.5 * Math.atan2(2 * sxy, sxx - syy);
+    let ux = Math.cos(ang), uy = Math.sin(ang);
+    if ((prevC[0] - c[0]) * ux + (prevC[1] - c[1]) * uy > 0) { ux = -ux; uy = -uy; }
+    const n = g.children.length;
+    const len = Math.min(Math.sqrt(cell.length * SAMPLE * SAMPLE) * 0.8, 27 * (n - 1));
+    const sp = n > 1 ? len / (n - 1) : 0;
+    const G = { node: g, lessons: [], cx: 0, cy: 0 };
+    g.children.forEach((l, k) => {
+      const N = makeNeuron(l, R);
+      const o = (k - (n - 1) / 2) * sp, zig = (k % 2 ? 1 : -1) * sp * (n > 2 ? 0.24 : 0.1);
+      let x = c[0] + ux * o - uy * zig + (rand() - 0.5) * 5, y = c[1] + uy * o + ux * zig + (rand() - 0.5) * 5;
+      for (let t = 0; t < 10 && !inRegionDeep(R, x, y, 10); t++) { x = lerp(x, c[0], 0.3); y = lerp(y, c[1], 0.3); }
+      N.bx = x; N.by = y; N.G = G; G.lessons.push(N);
+    });
+    g.G = G;
+    prevC = c;
+  });
+  // Relax so no two neurons crowd each other.
+  const rn = lessons.filter((N) => N.R === R);
+  for (let it = 0; it < 40; it++) {
+    for (let i = 0; i < rn.length; i++) for (let j = i + 1; j < rn.length; j++) {
+      const a = rn[i], b = rn[j], dx = b.bx - a.bx, dy = b.by - a.by, d = Math.hypot(dx, dy) || 0.01, min = a.G === b.G ? 19 : 25;
+      if (d >= min) continue;
+      const push = ((min - d) / 2) * 0.5, ux = dx / d, uy = dy / d;
+      if (inRegionDeep(R, a.bx - ux * push, a.by - uy * push, 9)) { a.bx -= ux * push; a.by -= uy * push; }
+      if (inRegionDeep(R, b.bx + ux * push, b.by + uy * push, 9)) { b.bx += ux * push; b.by += uy * push; }
+    }
+  }
+  for (const t of dom.children) {
+    const ls = leafGroupsOf(t).flatMap((g) => g.G.lessons);
+    const T = { node: t, R, lessons: ls, groups: leafGroupsOf(t).map((g) => g.G), cx: 0, cy: 0, rad: 0, tv: 1, ts: 1, tTv: 1, tTs: 1, fT: 0, tFT: 0 };
+    T.cx = ls.reduce((a, N) => a + N.bx, 0) / ls.length; T.cy = ls.reduce((a, N) => a + N.by, 0) / ls.length;
+    T.rad = Math.max(14, ...ls.map((N) => Math.hypot(N.bx - T.cx, N.by - T.cy)));
+    for (const N of ls) N.T = T;
+    t.T = T; topics.push(T);
+  }
+  for (const g of groups) { const G = g.G; G.cx = G.lessons.reduce((a, N) => a + N.bx, 0) / G.lessons.length; G.cy = G.lessons.reduce((a, N) => a + N.by, 0) / G.lessons.length; }
+}
+for (const N of lessons) { N.x = N.bx; N.y = N.by; N.hue = N.R.hue; N.light = N.R.light; }
+
+// Decor network: the unlabelled neurons that make the tissue feel alive.
+const decor = [];
+for (const R of REGIONS) {
+  R.decor = [];
+  const cand = R.samples.filter(() => rand() < 0.55).sort(() => rand() - 0.5);
+  const rl = lessons.filter((N) => N.R === R);
+  for (const [x, y] of cand) {
+    if (!inRegionDeep(R, x, y, 5)) continue;
+    if (rl.some((N) => Math.hypot(N.bx - x, N.by - y) < 13)) continue;
+    if (R.decor.some((D) => Math.hypot(D.x - x, D.y - y) < 25)) continue;
+    const D = { lesson: false, id: decor.length, R, x, y, r: 0.9 + rand() * 0.9, adj: [], spike: 0 };
+    R.decor.push(D); decor.push(D);
+  }
+}
+
+// ════════════════════════ Synapses ════════════════════════
+const edges = [];
+const edgeKeys = new Set();
+function addEdge(a, b, kind, bend = (rand() - 0.5) * 0.36) {
+  const key = a === b ? null : [a.n ? 'L' + a.n.id : 'D' + a.id, b.n ? 'L' + b.n.id : 'D' + b.id].sort().join('|');
+  if (!key || edgeKeys.has(key)) return null;
+  edgeKeys.add(key);
+  const e = { a, b, kind, bend, len: Math.hypot(a.x - b.x, a.y - b.y), R: a.R === b.R ? a.R : null, cx: 0, cy: 0 };
+  edges.push(e); a.adj.push({ e, out: true }); b.adj.push({ e, out: false });
+  return e;
+}
+for (const R of REGIONS) {
+  const groups = leafGroupsOf(R.dom).map((g) => g.G);
+  groups.forEach((G, gi) => {
+    for (let k = 1; k < G.lessons.length; k++) addEdge(G.lessons[k - 1], G.lessons[k], 'ladder');
+    if (gi > 0) {
+      const prev = groups[gi - 1].lessons, a = prev[prev.length - 1], b = G.lessons[0];
+      addEdge(a, b, 'chain', (rand() - 0.5) * 0.5);
+    }
+  });
+  const rl = lessons.filter((N) => N.R === R);
+  for (const N of rl) {
+    const near = rl.filter((M) => M.G !== N.G).map((M) => [M, Math.hypot(M.bx - N.bx, M.by - N.by)]).sort((p, q) => p[1] - q[1]);
+    if (near.length && near[0][1] < 64) addEdge(N, near[0][0], 'near');
+  }
+  // Decor mesh + dendrites from lesson neurons into it.
+  for (const D of R.decor) {
+    const near = R.decor.filter((E) => E !== D).map((E) => [E, Math.hypot(E.x - D.x, E.y - D.y)]).sort((p, q) => p[1] - q[1]);
+    for (let k = 0; k < 2 && k < near.length; k++) if (near[k][1] < 50) addEdge(D, near[k][0], 'decor', (rand() - 0.5) * 0.5);
+  }
+  for (const N of rl) {
+    const near = R.decor.map((E) => [E, Math.hypot(E.x - N.bx, E.y - N.by)]).sort((p, q) => p[1] - q[1]);
+    for (let k = 0; k < 3 && k < near.length; k++) if (near[k][1] < 52) addEdge(N, near[k][0], 'dend', (rand() - 0.5) * 0.6);
+  }
+}
+// Long-range tracts between regions (prerequisites that cross domains).
+const byLabel = (s) => lessons.find((N) => N.n.label === s);
+[
+  ['Write y = mx + b', 'Exponential vs linear'], ['Multi-step equations', 'GCF factoring'], ['Rate of change', 'Unit rates'],
+  ['Slope from two points', 'Line of best fit'], ['Read the vertex', 'Circle equations'], ['Parallel & perpendicular', 'Parallel lines & transversals'],
+  ['Quantitative evidence', 'Scatterplots'], ['Words in context', 'Functions in context'], ['Proportions', 'Similar triangles'],
+].forEach(([a, b]) => {
+  const A = byLabel(a), B = byLabel(b);
+  if (!A || !B) return;
+  const e = addEdge(A, B, 'tract', 0);
+  if (!e) return;
+  const mx = (A.bx + B.bx) / 2, my = (A.by + B.by) / 2, dx = B.bx - A.bx, dy = B.by - A.by, len = Math.hypot(dx, dy);
+  let nx = -dy / len, ny = dx / len;
+  if (Math.abs(dx) > Math.abs(dy) ? ny > 0 : nx < 0) { nx = -nx; ny = -ny; }
+  e.cx = mx + nx * len * 0.24; e.cy = my + ny * len * 0.24;
+});
+// Static decor geometry per region (world space, drawn with the camera transform).
+for (const R of REGIONS) {
+  const ep = new Path2D(), np = new Path2D();
+  for (const e of edges) {
+    if (e.kind !== 'decor' || e.R !== R) continue;
+    const mx = (e.a.x + e.b.x) / 2, my = (e.a.y + e.b.y) / 2, dx = e.b.x - e.a.x, dy = e.b.y - e.a.y;
+    e.cx = mx - dy * e.bend; e.cy = my + dx * e.bend;
+    ep.moveTo(e.a.x, e.a.y); ep.quadraticCurveTo(e.cx, e.cy, e.b.x, e.b.y);
+  }
+  for (const D of R.decor) { np.moveTo(D.x + D.r, D.y); np.arc(D.x, D.y, D.r, 0, TAU); }
+  R.decorEdges = ep; R.decorNodes = np;
+  R.decorEdgeList = edges.filter((e) => e.kind === 'decor' && e.R === R);
+}
+
+// ════════════════════════ States ════════════════════════
+const vstate = (N) => N.hold || N.n.state;
+// Neuron colour = learning state, everywhere (canvas, labels, tooltip, pill, pulses).
+const GREEN = '#3FA669', GREEN_LIGHT = mix(GREEN, C.foam, 0.35), ORANGE = '#FF9F43', ORANGE_SHADOW = '#D9792A';
+const STATE_COL = { mastered: GREEN, progress: ORANGE, ready: C.sun, locked: C.cloud };
+const STATE_RING = { progress: ORANGE_SHADOW, ready: C.sunShadow };
+const sk = (N) => { const s = vstate(N); return s === 'frontier' ? (N.n.progress > 0 ? 'progress' : 'ready') : s; };
+// One recommended next lesson: the furthest-along in-progress one, else the first ready one in domain order.
+let recN = null;
+function recommend() {
+  let best = null;
+  for (const N of lessons) {
+    if (vstate(N) !== 'frontier') continue;
+    if (!best || (N.n.progress > 0 && N.n.progress > best.n.progress) || (best.n.progress === 0 && N.n.progress > 0)) best = N;
+  }
+  return best;
+}
+function edgeState(e) {
+  if (e.kind === 'decor') return 'decor';
+  const sa = e.a.lesson ? vstate(e.a) : 'mastered', sb = e.b.lesson ? vstate(e.b) : 'mastered';
+  if (e.kind === 'dend') { const s = e.a.lesson ? sa : sb; return s === 'mastered' ? 'live' : s === 'frontier' ? 'charging' : 'dormant'; }
+  if (sa === 'mastered' && sb === 'mastered') return 'live';
+  if ((sa === 'mastered' && sb === 'frontier') || (sb === 'mastered' && sa === 'frontier')) return 'charging';
+  return 'dormant';
+}
+const tmp = { x: 0, y: 0 };
+function edgeCtrl(e) {
+  if (e.kind === 'tract' || e.kind === 'decor') return;
+  const ax = e.a.x, ay = e.a.y, bx = e.b.x, by = e.b.y;
+  e.cx = (ax + bx) / 2 - (by - ay) * e.bend; e.cy = (ay + by) / 2 + (bx - ax) * e.bend;
+}
+function edgePoint(e, t, out = tmp) {
+  const u = 1 - t;
+  out.x = u * u * e.a.x + 2 * u * t * e.cx + t * t * e.b.x;
+  out.y = u * u * e.a.y + 2 * u * t * e.cy + t * t * e.b.y;
+  return out;
+}
+
+// ════════════════════════ Canvas, camera, viewport ════════════════════════
+const crisp = document.getElementById('crisp'), blurCv = document.getElementById('blur'), baseCv = document.getElementById('base');
+const cx = crisp.getContext('2d'), bx = blurCv.getContext('2d'), ax = baseCv.getContext('2d');
+const layerKeys = { base: '', blur: '' };
+const safe = { list: [], at: 0 };
+const BR = 0.5;
+let W = 0, H = 0, DPR = 1, VP = { x: 0, y: 0, w: 1, h: 1, cx: 0, cy: 0 };
+function resize() {
+  W = innerWidth; H = innerHeight; DPR = Math.min(devicePixelRatio || 1, 2);
+  crisp.width = Math.round(W * DPR); crisp.height = Math.round(H * DPR);
+  blurCv.width = Math.round(W * BR); blurCv.height = Math.round(H * BR);
+  baseCv.width = Math.round(W * DPR); baseCv.height = Math.round(H * DPR);
+  layerKeys.base = layerKeys.blur = ''; safe.at = 0;
+}
+addEventListener('resize', resize);
+resize();
+
+let cardOpen = false;
+const narrow = () => W < 700;
+function viewport() {
+  const n = narrow();
+  const padX = n ? 10 : clamp(W * 0.03, 20, 56);
+  const padTop = n ? (focus === root ? 104 : 152) : 96, padBot = n && cardOpen ? 300 : 96;
+  const padRight = cardOpen && W >= 900 ? 396 : padX;
+  const v = { x: padX, y: padTop, w: Math.max(60, W - padX - padRight), h: Math.max(60, H - padTop - padBot) };
+  v.cx = v.x + v.w / 2; v.cy = v.y + v.h / 2;
+  return v;
+}
+const cam = { x: 0, y: 40, z: 0.6 }, camV = { x: 0, y: 0, z: 0 };
+const sx = (x) => VP.cx + (x - cam.x) * cam.z, sy = (y) => VP.cy + (y - cam.y) * cam.z;
+const wx = (x) => cam.x + (x - VP.cx) / cam.z, wy = (y) => cam.y + (y - VP.cy) / cam.z;
+
+const SPREAD = 1.45;
+function frameFor(nav) {
+  let box, pad, zMax;
+  if (nav === root) {
+    box = BRAIN_BOX.slice();
+    if (narrow()) pad = { l: 4, r: 4, t: 64, b: 48 };
+    else {
+      for (const R of REGIONS) { const [x, y] = R.label.L; box[0] = Math.min(box[0], x); box[1] = Math.min(box[1], y); box[2] = Math.max(box[2], x); box[3] = Math.max(box[3], y); }
+      pad = { l: 140, r: 190, t: 34, b: 34 };
+    }
+    zMax = 3;
+  } else if (nav.depth === 1) {
+    box = nav.R.box.slice(); pad = { l: 24, r: 24, t: 34, b: 24 }; zMax = 3.4;
+  } else {
+    const T = nav.T, s = SPREAD - 1;
+    box = [Infinity, Infinity, -Infinity, -Infinity];
+    for (const N of T.lessons) {
+      const x = N.bx + (N.bx - T.cx) * s, y = N.by + (N.by - T.cy) * s;
+      box[0] = Math.min(box[0], x); box[1] = Math.min(box[1], y); box[2] = Math.max(box[2], x); box[3] = Math.max(box[3], y);
+    }
+    box[0] -= 16; box[1] -= 16; box[2] += 16; box[3] += 16;
+    pad = narrow() ? { l: 96, r: 96, t: 40, b: 40 } : { l: 150, r: 150, t: 46, b: 40 };
+    zMax = 4.4;
+  }
+  const fit = (z) => {
+    const x0 = box[0] - (z ? pad.l / z : 0), x1 = box[2] + (z ? pad.r / z : 0), y0 = box[1] - (z ? pad.t / z : 0), y1 = box[3] + (z ? pad.b / z : 0);
+    return { x: (x0 + x1) / 2, y: (y0 + y1) / 2, z: Math.min(VP.w / Math.max(1, x1 - x0), VP.h / Math.max(1, y1 - y0), zMax) };
+  };
+  let f = fit(0); f = fit(f.z); f = fit(f.z);
+  return f;
+}
+const blend = (a, b, t) => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, z: a.z * Math.pow(b.z / a.z, t) });
+
+// ════════════════════════ Navigation (pointer proximity, lean → commit) ════════════════════════
+const DWELL = { in: 120, out: 170, side: 300 };
+const LEAN = { in: 0.45, out: 0.32, side: 0.3 };
+const SETTLE_MS = 320;
+const CAM_FREQ = reduceMotion ? 40 : 16; // critically damped, settles in ~0.3s
+const NAV = [root, ...graph.domains, ...topics.map((T) => T.node)];
+for (const n of NAV) { n._prox = 0; n._tProx = 0; }
+let focus = root, leanNode = null, leanType = null, hoverLeaf = null, forcedHover = null, selected = null;
+let pending = null, lockUntil = 0, clock = performance.now(), navOn = false, lastCardClose = 0;
+const pointer = { x: -1, y: -1, in: false, lastMoveAt: 0, travel: 0, vx: 0, vy: 0 };
+const regionOfNav = (n) => (n === root ? null : n.domain.R);
+
+function edgeP() {
+  const d = Math.min(pointer.x, W - pointer.x, pointer.y, H - pointer.y);
+  return 1 - clamp((d - 10) / 56, 0, 1);
+}
+function evalPointer() {
+  if (!pointer.in || cardOpen) return null;
+  const z = cam.z, px = pointer.x, py = pointer.y;
+  const here = regionAt(wx(px), wy(py));
+  let best = null;
+  const consider = (node, type, p, inside, prio) => {
+    const score = inside ? 10 + prio : p;
+    if (score > 0.002 && (!best || score > best.score)) best = { node, type, p, inside, score };
+  };
+  if (focus === root) {
+    if (here) {
+      const d = Math.hypot(px - sx(here.cx), py - sy(here.cy)), rS = here.rad * z, core = rS * 0.48;
+      consider(here.dom, 'in', 1 - clamp((d - core) / (rS * 0.85), 0, 1), d <= core, 0.5);
+    }
+    return best;
+  }
+  const F = regionOfNav(focus);
+  const e = edgeP();
+  if (focus.depth === 1) {
+    // Distance from the pointer to the focused region's tissue, in px.
+    let dOut = Infinity;
+    if (here !== F) for (const [x, y] of F.samples) dOut = Math.min(dOut, Math.hypot(px - sx(x), py - sy(y)));
+    else dOut = 0;
+    if (dOut < 50) for (const t of focus.children) {
+      const T = t.T, d = Math.hypot(px - sx(T.cx), py - sy(T.cy)), rS = T.rad * z;
+      const core = Math.max(26, rS * 0.9), infl = Math.max(70, rS * 1.7);
+      consider(t, 'in', 1 - clamp((d - core) / infl, 0, 1), d <= core, 0.5);
+    }
+    const p = clamp((dOut - 26) / 100, 0, 1);
+    // The viewport edge always means "back out", even when a neighbouring lobe is under the pointer.
+    if (e > 0.45) consider(root, 'out', e, e >= 0.85, 0.3);
+    else if (here && here !== F) consider(here.dom, 'side', p, p >= 1, 0.2);
+    else if (!here) consider(root, 'out', p, p >= 1, 0.1);
+    return best;
+  }
+  // Topic focus: siblings pull from the sides; leaving the topic's frame zooms back to the region.
+  const T = focus.T;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const N of T.lessons) { x0 = Math.min(x0, N.sx); y0 = Math.min(y0, N.sy); x1 = Math.max(x1, N.sx); y1 = Math.max(y1, N.sy); }
+  const m = 70, ddx = Math.max(x0 - m - px, 0, px - x1 - m), ddy = Math.max(y0 - m - py, 0, py - y1 - m), dOut = Math.hypot(ddx, ddy);
+  for (const t of focus.parent.children) {
+    if (t === focus) continue;
+    const S = t.T, d = Math.hypot(px - sx(S.cx), py - sy(S.cy)), core = Math.max(26, S.rad * z * 0.7);
+    if (d < core + 80) consider(t, 'side', (1 - clamp((d - core) / 80, 0, 1)) * 0.8, d <= core, 0.2);
+  }
+  const p = Math.max(clamp(dOut / 110, 0, 1), e);
+  consider(focus.parent, 'out', p, p >= 1 || e >= 0.85, e > 0.45 ? 0.3 : 0.1);
+  return best;
+}
+function leafAt(px, py, keep) {
+  // Snap to the nearest neuron within a generous radius; the current one is sticky until clearly left.
+  const atRoot = focus === root;
+  let hit = null, bd = Infinity;
+  for (const N of lessons) {
+    if (!N.revealed || N.R.rv < 0.3 || (N.T.tv < 0.3 && focus.depth === 2)) continue;
+    const d = Math.hypot(px - N.sx, py - N.sy), r = atRoot ? Math.max(N.rpx + 6, 12) : Math.max(N.rpx + 10, 18);
+    if (d <= r && d < bd) { bd = d; hit = N; }
+  }
+  if (!hit && keep && Math.hypot(px - keep.sx, py - keep.sy) <= Math.max(keep.rpx + 18, 26)) hit = keep;
+  return hit;
+}
+function topicAt(px, py) {
+  if (focus === root) return null;
+  const F = regionOfNav(focus);
+  let hit = null, bd = Infinity;
+  for (const t of F.dom.children) { const T = t.T, d = Math.hypot(px - sx(T.cx), py - sy(T.cy)); if (d < Math.max(30, T.rad * cam.z + 14) && d < bd) { bd = d; hit = t; } }
+  return hit;
+}
+const nav = { rearmed: true, heard: null, sinceRest: 0 };
+function updateHover() {
+  const prev = hoverLeaf;
+  hoverLeaf = navOn && pointer.in ? leafAt(pointer.x, pointer.y, prev) : null;
+  if (!hoverLeaf && forcedHover) hoverLeaf = forcedHover;
+  if (hoverLeaf && hoverLeaf !== prev && pointer.in && focus !== root) score.sfx('hover');
+  updateTip();
+}
+function setCursor() {
+  const clickable = hoverLeaf || (pointer.in && navOn && !cardOpen && (leanType === 'in' || (focus === root && regionAt(wx(pointer.x), wy(pointer.y)))));
+  crisp.style.cursor = clickable ? 'pointer' : 'default';
+}
+// The pill and its neuron are one target. While the pointer is on it, near it, or clearly heading for it,
+// navigation holds still so the target never slides away on the way there.
+function approachingNext(now) {
+  if (!pill.shown || !pointer.in || !recN) return false;
+  const r = pillEl.getBoundingClientRect();
+  const dx = Math.max(r.left - pointer.x, 0, pointer.x - r.right), dy = Math.max(r.top - pointer.y, 0, pointer.y - r.bottom);
+  const dPill = Math.hypot(dx, dy), dNeuron = Math.hypot(pointer.x - recN.sx, pointer.y - recN.sy);
+  if (Math.min(dPill, dNeuron) < 96) return true;
+  const sp = Math.hypot(pointer.vx, pointer.vy);
+  if (sp < 0.15 || now - pointer.lastMoveAt > 160) return false;
+  const tx = clamp(pointer.x, r.left, r.right) - pointer.x, ty = clamp(pointer.y, r.top, r.bottom) - pointer.y, td = Math.hypot(tx, ty) || 1;
+  return dPill < 460 && (pointer.vx * tx + pointer.vy * ty) / (sp * td) > 0.9;
+}
+function handlePointer(now) {
+  updateHover();
+  if (pill.hover || approachingNext(now)) { pending = null; setCursor(); return; }
+  // A pause after a zoom re-arms navigation, so one deliberate move changes one level.
+  if (!nav.rearmed && now > lockUntil && now - pointer.lastMoveAt > 220) { nav.rearmed = true; nav.sinceRest = 0; }
+  // Inside a topic, a hovered lesson pins the camera so it never slides out from under the cursor.
+  if (hoverLeaf && focus.depth === 2 && pointer.in) { pending = null; setCursor(); return; }
+  const hit = navOn ? evalPointer() : null;
+  leanNode = hit ? hit.node : null;
+  leanType = hit ? hit.type : null;
+  for (const n of NAV) n._tProx = 0;
+  if (leanNode) leanNode._tProx = hit.inside ? 1 : smooth(hit.p);
+  if (leanNode && leanType === 'in' && hit.p > 0.3 && nav.heard !== leanNode) { nav.heard = leanNode; score.sfx('hover'); }
+  if (hit && hit.inside && now >= lockUntil) {
+    if (!pending || pending.node !== hit.node) pending = { node: hit.node, since: now };
+    const moving = pointer.travel >= 6 && pointer.lastMoveAt >= pending.since - 350;
+    // Zooming out needs a real rest and then fresh movement; zooming in can also follow a long, steady approach.
+    const deliberate = hit.type === 'out' ? nav.rearmed && nav.sinceRest >= 24 : nav.rearmed || pointer.travel >= 160;
+    if (moving && deliberate && now - pending.since >= DWELL[hit.type]) setFocus(hit.node);
+  } else pending = null;
+  setCursor();
+}
+function setFocus(n, opts = {}) {
+  const o = typeof opts === 'boolean' ? { quiet: opts } : opts;
+  if (!n || n === focus || n.depth > 2) return;
+  const deeper = n.depth > focus.depth;
+  focus = n;
+  lockUntil = clock + (reduceMotion ? 120 : SETTLE_MS);
+  pointer.travel = 0; pending = null; nav.rearmed = false; nav.heard = null;
+  renderCrumbs();
+  if (card.lesson && focus !== root && !graph.pathTo(card.lesson).includes(focus)) card.close();
+  if (!o.quiet) score.sfx(o.sound || (deeper ? 'zoomIn' : 'zoomOut'));
+  if (n.depth === 1) n.R.seen = true;
+  if (n !== root) dismissHint();
+  safe.at = 0;
+}
+
+// Visibility targets: focused branch sharp, everything else dims and blurs.
+function computeTargets() {
+  const F = focus, p = leanNode ? leanNode._prox : 0;
+  const FR = regionOfNav(F);
+  for (const R of REGIONS) {
+    if (F === root) { R.tRv = 1; R.tRs = 1; if (leanNode && leanNode.depth === 1 && leanNode.R !== R) { R.tRv = 1 - 0.45 * p; R.tRs = 1 - 0.75 * p; } }
+    else if (R === FR) { R.tRv = 1; R.tRs = 1; }
+    else {
+      R.tRv = F.depth === 1 ? 0.3 : 0.16; R.tRs = 0.04;
+      if (leanType === 'side' && leanNode.depth === 1 && leanNode.R === R) { R.tRv += 0.55 * p; R.tRs += 0.7 * p; }
+      if (leanType === 'out' && leanNode === root) { R.tRv += 0.5 * p; R.tRs += 0.6 * p; }
+    }
+  }
+  for (const T of topics) {
+    T.tTv = 1; T.tTs = 1; T.tFT = 0;
+    if (F.depth === 1 && T.R === FR && leanNode && leanType === 'in' && leanNode.depth === 2 && leanNode.T !== T) { T.tTv = 1 - 0.35 * p; T.tTs = 1 - 0.65 * p; }
+    if (F.depth === 2 && T.R === FR && T.node !== F) {
+      T.tTv = 0.42; T.tTs = 0.12;
+      if (leanNode && leanNode.T === T) { T.tTv += 0.5 * p; T.tTs += 0.8 * p; }
+      if (leanType === 'out') { T.tTv += 0.4 * p; T.tTs += 0.6 * p; }
+    }
+    if (T.node === F) T.tFT = leanType === 'out' ? 1 - 0.4 * p : 1;
+    else if (leanNode === T.node && leanType === 'in') T.tFT = 0.35 * p;
+  }
+}
+
+function animate(dt) {
+  const kV = 1 - Math.exp(-dt * (reduceMotion ? 30 : 9));
+  const kP = 1 - Math.exp(-dt * 16);
+  const kM = 1 - Math.exp(-dt * 3);
+  for (const R of REGIONS) {
+    R.rv += (R.tRv - R.rv) * kV; R.rs += (R.tRs - R.rs) * kV; R.dm += (R.dom.m - R.dm) * kM;
+    R.flare = Math.max(0, R.flare - dt * 0.7);
+  }
+  for (const T of topics) { T.tv += (T.tTv - T.tv) * kV; T.ts += (T.tTs - T.ts) * kV; T.fT += (T.tFT - T.fT) * kV; }
+  for (const n of NAV) n._prox += (n._tProx - n._prox) * kP;
+  rootT += ((focus === root ? 1 : 0) - rootT) * kV;
+  for (const N of lessons) {
+    const s = (SPREAD - 1) * N.T.fT;
+    N.x = N.bx + (N.bx - N.T.cx) * s; N.y = N.by + (N.by - N.T.cy) * s;
+    N.hl += ((N === hoverLeaf || N === selected || (N === recN && pill.hover) ? 1 : 0) - N.hl) * kP;
+    N.rec += ((N === recN && introDone ? 1 : 0) - N.rec) * kV;
+  }
+  let target = frameFor(focus);
+  if (leanNode && leanNode._prox > 0.001) target = blend(target, frameFor(leanNode), LEAN[leanType] * leanNode._prox);
+  if (intro.zoomMul !== 1) target.z *= intro.zoomMul;
+  // Critically damped spring (v1): keeps velocity when the target moves, so lean → commit is one motion.
+  const tz = Math.log(target.z), w = CAM_FREQ, steps = Math.max(1, Math.ceil(dt * 240)), h = dt / steps;
+  let lz = Math.log(cam.z);
+  for (let i = 0; i < steps; i++) {
+    camV.x += (w * w * (target.x - cam.x) - 2 * w * camV.x) * h; cam.x += camV.x * h;
+    camV.y += (w * w * (target.y - cam.y) - 2 * w * camV.y) * h; cam.y += camV.y * h;
+    camV.z += (w * w * (tz - lz) - 2 * w * camV.z) * h; lz += camV.z * h;
+  }
+  cam.z = Math.exp(lz);
+}
+let rootT = 1;
+function snapCamera() {
+  VP = viewport();
+  computeTargets();
+  for (const R of REGIONS) { R.rv = R.tRv; R.rs = R.tRs; }
+  for (const T of topics) { T.tv = T.tTv; T.ts = T.tTs; T.fT = T.tFT; }
+  rootT = focus === root ? 1 : 0;
+  for (const N of lessons) { const s = (SPREAD - 1) * N.T.fT; N.x = N.bx + (N.bx - N.T.cx) * s; N.y = N.by + (N.by - N.T.cy) * s; }
+  const f = frameFor(focus);
+  cam.x = f.x; cam.y = f.y; cam.z = f.z; camV.x = camV.y = camV.z = 0;
+}
+
+// ════════════════════════ Neural simulation (firing + pooled pulses) ════════════════════════
+const POOL = 900;
+const pulses = Array.from({ length: POOL }, () => ({ on: false, e: null, fwd: true, t: 0, sp: 1, col: C.foam, size: 1, kind: 0, hops: 0, R: null }));
+const free = pulses.map((_, i) => POOL - 1 - i);
+const live = [];
+const K = { live: 0, charge: 1, dend: 2, decor: 3, ignite: 4, tract: 5 };
+let fireCount = 0, fireRate = 0, cascadeUntil = 0;
+function spawn(e, fwd, kind, opts = {}) {
+  if (!free.length) return null;
+  const p = pulses[free.pop()];
+  const len = e.kind === 'decor' ? e.len : Math.max(8, Math.hypot(e.a.x - e.b.x, e.a.y - e.b.y) * (e.kind === 'tract' ? 1.25 : 1.05));
+  const speed = (opts.speed || 1) * (kind === K.tract ? 110 : kind === K.decor ? 105 : 150) * (reduceMotion ? 0.6 : 1);
+  p.on = true; p.e = e; p.fwd = fwd; p.t = 0; p.sp = speed / len; p.kind = kind; p.hops = opts.hops || 0;
+  p.size = opts.size || (kind === K.decor || kind === K.dend ? 0.65 : kind === K.ignite ? 1.7 : kind === K.tract ? 0.85 : 1);
+  const src = fwd ? e.a : e.b;
+  p.R = e.R || src.R;
+  const dst = fwd ? e.b : e.a;
+  p.col = kind === K.ignite ? C.foam : kind === K.charge && dst.lesson ? STATE_COL[sk(dst)] : GREEN_LIGHT;
+  live.push(p);
+  return p;
+}
+function fire(N, now, strength = 1) {
+  N.spike = Math.min(1.5, N.spike + strength); N.lastFire = now;
+  fireCount++;
+  for (const { e, out } of N.adj) {
+    const other = out ? e.b : e.a;
+    if (other.lesson) {
+      const so = vstate(other);
+      if (so === 'mastered' && frand() < (e.kind === 'tract' ? 0.25 : 0.55)) spawn(e, out, e.kind === 'tract' ? K.tract : K.live);
+      else if (so === 'frontier' && frand() < 0.45) spawn(e, out, K.charge);
+    }
+  }
+}
+function wakeNeuron(N) { if (!N.hold) return; N.hold = null; N.holdUntil = 0; N.wake = 1; N.charge = 1; stateVersion++; score.sfx('unlock'); }
+function arrive(p, now) {
+  const N = p.fwd ? p.e.b : p.e.a;
+  if (N.lesson) {
+    if (p.kind === K.ignite) {
+      N.spike = Math.min(1.6, N.spike + 1.1);
+      score.sfx('step');
+      if (N.hold) wakeNeuron(N);
+      if (p.hops > 0) for (const { e, out } of N.adj) {
+        const o = out ? e.b : e.a;
+        if (o.lesson && e !== p.e && (o.hold || vstate(o) === 'mastered' || vstate(o) === 'frontier')) spawn(e, out, K.ignite, { hops: p.hops - 1, speed: 1 });
+      }
+      if (vstate(N) === 'mastered' && now - N.lastFire > 300) fire(N, now, 0.6);
+      return;
+    }
+    const s = vstate(N);
+    if (s === 'mastered') {
+      N.spike = Math.min(1.5, N.spike + 0.45);
+      const chainP = now < cascadeUntil && N.R.flare > 0.2 ? 0.85 : 0.2;
+      if (now - N.lastFire > 700 && frand() < chainP) fire(N, now, 0.8);
+    } else if (s === 'frontier') N.charge = 1;
+  } else {
+    N.spike = 1;
+    hotDecor.add(N);
+    if (p.hops > 0 && frand() < 0.55) {
+      const opts = N.adj.filter((a) => a.e !== p.e && a.e.kind === 'decor');
+      if (opts.length) { const a = opts[Math.floor(frand() * opts.length)]; spawn(a.e, a.out, K.decor, { hops: p.hops - 1 }); }
+    }
+  }
+}
+const hotDecor = new Set();
+function simulate(dt, now) {
+  const kS = Math.exp(-dt * 5), kC = Math.exp(-dt * 2.6);
+  const act = intro.activity;
+  for (const N of lessons) {
+    N.spike *= kS; N.charge *= kC;
+    N.ping = Math.max(0, N.ping - dt * 1.5); N.shock = Math.max(0, N.shock - dt * 0.8);
+    N.ignite = Math.max(0, N.ignite - dt * 0.6); N.wake = Math.max(0, N.wake - dt * 0.6);
+    if (N.fireAt && now >= N.fireAt) { N.fireAt = 0; fire(N, now, 1); }
+    if (N.hold && N.holdUntil && now >= N.holdUntil) wakeNeuron(N);
+    if (act > 0 && vstate(N) === 'mastered') {
+      const rate = (0.08 + 0.3 * N.R.dm) * act * (reduceMotion ? 0.35 : 1);
+      if (frand() < rate * dt) fire(N, now, 0.9);
+    }
+  }
+  for (const D of hotDecor) { D.spike *= Math.exp(-dt * 4); if (D.spike < 0.03) { D.spike = 0; hotDecor.delete(D); } }
+  for (let i = live.length - 1; i >= 0; i--) {
+    const p = live[i];
+    p.t += p.sp * dt;
+    if (p.t >= 1) { p.on = false; live[i] = live[live.length - 1]; live.pop(); free.push(p.i); arrive(p, now); }
+  }
+  fireRate += (fireCount / Math.max(dt, 1e-3) - fireRate) * (1 - Math.exp(-dt * 1.5));
+  fireCount = 0;
+}
+pulses.forEach((p, i) => { p.i = i; });
+
+// ════════════════════════ Sprites ════════════════════════
+const sprites = new Map();
+function sprite(color, core = true) {
+  const key = color + core;
+  let s = sprites.get(key);
+  if (s) return s;
+  s = document.createElement('canvas'); s.width = s.height = 64;
+  const g = s.getContext('2d'), grd = g.createRadialGradient(32, 32, 0, 32, 32, 32), [r, gg, b] = hex(color);
+  if (core) { grd.addColorStop(0, 'rgba(255,255,252,1)'); grd.addColorStop(0.16, `rgba(${r},${gg},${b},0.95)`); }
+  else grd.addColorStop(0, `rgba(${r},${gg},${b},0.85)`);
+  grd.addColorStop(0.42, `rgba(${r},${gg},${b},0.3)`); grd.addColorStop(1, `rgba(${r},${gg},${b},0)`);
+  g.fillStyle = grd; g.fillRect(0, 0, 64, 64);
+  sprites.set(key, s);
+  return s;
+}
+function glow(ctx, spr, x, y, rad, a) { if (a <= 0.003 || rad <= 0) return; ctx.globalAlpha = Math.min(1, a); ctx.drawImage(spr, x - rad, y - rad, rad * 2, rad * 2); }
+
+// ════════════════════════ Intro (MRI scan) state ════════════════════════
+const intro = { started: false, t0: 0, offset: 0, scan: 0, lit: 0, activity: 0, flash: 0, zoomMul: 1, done: false, events: [] };
+let introDone = false;
+const T_SCAN0 = reduceMotion ? 0.1 : 0.45, T_SCAN1 = reduceMotion ? 0.7 : 3.6, T_IMPACT = reduceMotion ? 1.0 : 5.8, T_END = reduceMotion ? 1.2 : 6.4;
+
+// ════════════════════════ Drawing ════════════════════════
+// Three stacked canvases. #base holds the static tissue (fill, lobe tints, folds, outline) and is redrawn
+// only when the camera or a lobe's look changes. #blur holds defocused lobes (CSS blur) and is cached the
+// same way. #crisp holds everything that moves and is the only layer drawn every frame.
+const TISSUE = '#13448E';
+let stemGrad = null;
+function worldTransform(ctx, scale) {
+  const z = cam.z;
+  ctx.setTransform(scale * z, 0, 0, scale * z, scale * (VP.cx - cam.x * z), scale * (VP.cy - cam.y * z));
+}
+function flicker(N, now) {
+  if (reduceMotion || !now) return 0.75;
+  const s = now / 1000;
+  return clamp(0.62 + 0.2 * Math.sin(s * 3.1 + N.seed * 40) + 0.22 * vnoise(s * 5 + N.seed * 90, N.seed * 13), 0.25, 1);
+}
+function regionLayerAlpha(R, layer) { return layer ? R.rv * R.rs : R.rv * (1 - R.rs); }
+function tintAlpha(R) { return clamp(intro.lit * (0.03 + 0.07 * R.dm) + R.flare * 0.18, 0, 1); }
+
+function drawFolds(ctx, layer) {
+  // Sulci: one dark, even stroke. Cerebellum folia: evenly spaced arcs in the same ink.
+  const z = cam.z, lit = intro.lit;
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = C.abyss;
+  ctx.save(); ctx.clip(PATHS.cerebrum);
+  for (const R of REGIONS) {
+    if (R.key === 'cerebellum' || !R.gyri) continue;
+    const a = regionLayerAlpha(R, layer) * (0.28 + 0.16 * lit);
+    if (a < 0.01) continue;
+    ctx.globalAlpha = a; ctx.lineWidth = (layer ? 1.4 : 2.2) / z; ctx.stroke(R.gyri);
+  }
+  ctx.restore();
+  const cbR = REG['Geometry & Trig'], a = regionLayerAlpha(cbR, layer) * (0.3 + 0.16 * lit);
+  if (a > 0.01) { ctx.save(); ctx.clip(PATHS.cerebellum); ctx.globalAlpha = a; ctx.lineWidth = (layer ? 1.2 : 2) / z; ctx.stroke(cbR.gyri); ctx.restore(); }
+}
+function drawDecor(ctx, layer) {
+  const z = cam.z, lit = intro.lit;
+  for (const R of REGIONS) {
+    const ra = regionLayerAlpha(R, layer) * lit;
+    if (ra < 0.01) continue;
+    const deepDim = focus.depth === 2 && R === regionOfNav(focus) ? 0.6 : 1;
+    ctx.globalAlpha = ra * (0.05 + 0.1 * R.dm) * deepDim; ctx.strokeStyle = R.light; ctx.lineWidth = (layer ? 0.8 : 1.4) / z; ctx.stroke(R.decorEdges);
+    ctx.globalAlpha = ra * (0.14 + 0.3 * R.dm) * deepDim; ctx.fillStyle = R.light; ctx.fill(R.decorNodes);
+  }
+  ctx.globalAlpha = 1;
+}
+function drawBase() {
+  const ctx = ax, z = cam.z, lit = intro.lit;
+  worldTransform(ctx, DPR);
+  if (!stemGrad) { stemGrad = ctx.createLinearGradient(0, 230, 0, 400); stemGrad.addColorStop(0, '#0F3A7E'); stemGrad.addColorStop(1, 'rgba(15,58,126,0)'); }
+  const body = 0.35 + 0.65 * Math.min(1, lit * 1.6);
+  ctx.globalAlpha = body; ctx.fillStyle = stemGrad; ctx.fill(PATHS.stem);
+  ctx.fillStyle = TISSUE; ctx.fill(PATHS.cerebellum); ctx.fill(PATHS.cerebrum);
+  ctx.save(); ctx.clip(PATHS.cerebrum);
+  for (const R of REGIONS) { if (R.key === 'cerebellum') continue; ctx.globalAlpha = tintAlpha(R); ctx.fillStyle = R.hue; ctx.fill(R.path); }
+  ctx.restore();
+  const cbR = REG['Geometry & Trig'];
+  ctx.globalAlpha = tintAlpha(cbR); ctx.fillStyle = cbR.hue; ctx.fill(PATHS.cerebellum);
+  drawFolds(ctx, 1);
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  const fa = 0.6 + 0.3 * lit;
+  ctx.strokeStyle = C.abyss;
+  ctx.globalAlpha = fa * 0.6; ctx.lineWidth = 2.6 / z; ctx.stroke(PATHS.deep);
+  ctx.globalAlpha = fa * 0.4; ctx.lineWidth = 1.2 / z; ctx.stroke(PATHS.shallow);
+  ctx.globalAlpha = 0.6 + 0.3 * lit; ctx.strokeStyle = C.wave1; ctx.lineWidth = 1.5 / z;
+  ctx.stroke(PATHS.cerebrum); ctx.stroke(PATHS.cerebellum);
+  ctx.save(); ctx.clip(PATHS.notCerebrum, 'evenodd');
+  const sg = ctx.createLinearGradient(0, 200, 0, 400); sg.addColorStop(0, rgba(C.wave1, 0.7)); sg.addColorStop(1, rgba(C.wave1, 0));
+  ctx.strokeStyle = sg; ctx.globalAlpha = 0.6; ctx.stroke(PATHS.stem);
+  ctx.restore();
+  drawDecor(ctx, 1);
+  ctx.globalAlpha = 1;
+}
+function drawBlurLayer() {
+  worldTransform(bx, BR);
+  drawFolds(bx, 0); drawDecor(bx, 0); drawEdges(bx, 0, 0); drawNeurons(bx, 0, 0);
+}
+
+function lessonAlpha(N, layer) { const vis = N.R.rv * N.T.tv, sh = N.R.rs * N.T.ts; return layer ? vis * sh : vis * (1 - sh); }
+
+function drawEdges(ctx, layer, now) {
+  const z = cam.z, lit = intro.lit, zk = clamp((z - 1.1) / 0.5, 0, 1);
+  ctx.lineCap = 'round';
+  for (const e of edges) {
+    if (e.kind === 'decor') continue;
+    if (!e.a.revealed && e.a.lesson && intro.scan < 1) continue;
+    const A = e.a.lesson ? e.a : e.b, B = e.b.lesson ? e.b : e.a;
+    let a = Math.min(lessonAlpha(A, layer), e.b.lesson ? lessonAlpha(B, layer) : lessonAlpha(A, layer));
+    if (e.kind === 'tract') a = layer ? Math.min(A.R.rv, B.R.rv) * Math.max(0.35, Math.min(A.R.rs, B.R.rs)) : 0;
+    if (a < 0.01) continue;
+    const st = edgeState(e);
+    ctx.beginPath(); ctx.moveTo(e.a.x, e.a.y); ctx.quadraticCurveTo(e.cx, e.cy, e.b.x, e.b.y);
+    if (e.kind === 'tract') {
+      if (st === 'live') {
+        ctx.globalAlpha = a * (0.03 + 0.05 * lit); ctx.strokeStyle = C.wave1; ctx.lineWidth = 6 / z; ctx.stroke();
+        ctx.globalAlpha = a * (0.1 + 0.12 * lit); ctx.lineWidth = 1.1 / z; ctx.stroke();
+      } else {
+        ctx.setLineDash([2 / z, 6 / z]); ctx.globalAlpha = a * 0.14; ctx.strokeStyle = C.cloud; ctx.lineWidth = 1.1 / z; ctx.stroke(); ctx.setLineDash([]);
+      }
+      continue;
+    }
+    const dend = e.kind === 'dend';
+    if (st === 'live') {
+      ctx.globalAlpha = a * (dend ? 0.1 + 0.12 * lit : 0.22 + 0.3 * lit);
+      ctx.strokeStyle = GREEN_LIGHT; ctx.lineWidth = (dend ? 0.9 : e.kind === 'near' ? 1.1 : 1.7) / Math.pow(z, 0.75);
+      ctx.stroke();
+    } else if (st === 'charging') {
+      const fN = e.a.lesson && vstate(e.a) === 'frontier' ? e.a : e.b, fcol = fN.lesson ? STATE_COL[sk(fN)] : C.sun;
+      if (dend) { if (zk > 0) { ctx.globalAlpha = a * 0.12 * zk; ctx.strokeStyle = fcol; ctx.lineWidth = 0.8 / z; ctx.stroke(); } continue; }
+      if (zk < 1) { ctx.globalAlpha = a * 0.2 * (1 - zk); ctx.strokeStyle = C.cloud; ctx.lineWidth = 1 / z; ctx.stroke(); }
+      if (zk <= 0) continue;
+      // Dashes flow from the mastered end toward the frontier neuron: "about to fire".
+      const fromA = vstate(e.a) === 'mastered';
+      ctx.setLineDash([4 / z, 5 / z]); ctx.lineDashOffset = ((fromA ? -1 : 1) * now * 0.018) / z;
+      ctx.globalAlpha = a * (0.45 + 0.25 * lit) * zk; ctx.strokeStyle = fcol; ctx.lineWidth = 1.5 / Math.pow(z, 0.75); ctx.stroke();
+      ctx.setLineDash([]); ctx.lineDashOffset = 0;
+    } else {
+      ctx.globalAlpha = a * (dend ? 0.06 : 0.2); ctx.strokeStyle = C.cloud; ctx.lineWidth = (dend ? 0.7 : 1) / z; ctx.stroke();
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawPulses(ctx) {
+  // Pulses only travel on learned synapses, and only in lobes that are in focus.
+  const z = cam.z, ps = 1 / Math.pow(z, 0.4);
+  const pt = { x: 0, y: 0 };
+  ctx.globalCompositeOperation = 'lighter';
+  for (const p of live) {
+    const R = p.R, ign = p.kind === K.ignite;
+    if (R && R.rs < 0.5 && !ign && p.kind !== K.tract) continue;
+    let a = R ? R.rv : 1;
+    const A = p.e.a, B = p.e.b;
+    if (A.lesson && A.T) a = Math.min(a, A.R.rv * A.T.tv);
+    if (B.lesson && B.T) a = Math.min(a, Math.max(B.R.rv * B.T.tv, p.kind === K.tract ? 0.5 : 0));
+    a *= intro.lit * (ign ? 1 : 0.55);
+    if (a < 0.02) continue;
+    const spr = sprite(p.col, ign), s = p.size * ps * (ign ? 1 : 0.8);
+    const t = p.fwd ? p.t : 1 - p.t, dir = p.fwd ? -1 : 1, tl = Math.min(0.2, 12 / Math.max(10, p.e.len));
+    edgePoint(p.e, clamp(t + dir * tl, 0, 1), pt); glow(ctx, spr, pt.x, pt.y, 4.5 * s, a * 0.4);
+    edgePoint(p.e, t, pt); glow(ctx, spr, pt.x, pt.y, (p.kind === K.dend ? 5 : 7) * s, a);
+  }
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = 1;
+}
+
+function drawNeurons(ctx, layer, now) {
+  // layer 1 = crisp and live (spikes, pulses, hover); layer 0 = the cached, defocused stand-in.
+  const z = cam.z, lit = intro.lit;
+  const rBase = 4.4 * Math.pow(z, 0.7);
+  for (const N of lessons) {
+    if (layer) { N.rpx = rBase * (1 + 0.28 * N.hl + 0.12 * Math.min(1, N.spike) + 0.55 * N.rec); N.sx = sx(N.x); N.sy = sy(N.y); }
+    const a = lessonAlpha(N, layer);
+    if (a < 0.01 || (!N.revealed && intro.scan < 1)) continue;
+    const px = sx(N.x), py = sy(N.y);
+    if (px < -60 || py < -60 || px > W + 60 || py > H + 60) continue;
+    const rpx = layer ? N.rpx : rBase, r = rpx / z, k = sk(N), x = N.x, y = N.y;
+    const sp = layer ? Math.min(1, N.spike) : 0, ign = layer ? N.ignite : 0, rec = layer ? N.rec : 0;
+    if (k === 'mastered') {
+      if (sp + ign > 0.02) {
+        ctx.globalCompositeOperation = 'lighter';
+        glow(ctx, sprite(GREEN, false), x, y, r * (2.6 + 2.4 * sp + 6 * ign), a * lit * (0.3 * sp + 0.6 * ign));
+        ctx.globalCompositeOperation = 'source-over';
+      }
+      if (layer && rpx > 6.5) {
+        ctx.globalAlpha = a * (0.3 + 0.35 * lit); ctx.strokeStyle = GREEN_LIGHT; ctx.lineWidth = 1 / z; ctx.lineCap = 'round';
+        ctx.beginPath();
+        for (const d of N.dend) {
+          const ex1 = x + Math.cos(d.a) * r * d.l, ey1 = y + Math.sin(d.a) * r * d.l;
+          ctx.moveTo(x + Math.cos(d.a) * r * 0.8, y + Math.sin(d.a) * r * 0.8); ctx.lineTo(ex1, ey1);
+          ctx.moveTo(lerp(x, ex1, 0.65), lerp(y, ey1, 0.65)); ctx.lineTo(ex1 + Math.cos(d.a + d.f) * r * 0.6, ey1 + Math.sin(d.a + d.f) * r * 0.6);
+        }
+        ctx.stroke();
+      }
+      ctx.globalAlpha = a * (0.7 + 0.3 * lit);
+      ctx.fillStyle = mixCache(GREEN, 0.1 + 0.1 * lit + 0.3 * sp);
+      ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.fill();
+      ctx.globalAlpha = a * (0.6 + 0.3 * lit); ctx.fillStyle = mixCache(GREEN, 0.75);
+      ctx.beginPath(); ctx.arc(x, y, r * (0.42 + 0.12 * sp), 0, TAU); ctx.fill();
+      if (layer && N.shock > 0) {
+        ctx.globalAlpha = a * N.shock; ctx.strokeStyle = GREEN_LIGHT; ctx.lineWidth = (2 * N.shock) / z;
+        ctx.beginPath(); ctx.arc(x, y, r * (1.6 + 9 * smooth(1 - N.shock)), 0, TAU); ctx.stroke();
+      }
+    } else if (k === 'progress' || k === 'ready') {
+      // Frontier: orange = in progress, yellow = ready. Quiet by default; the recommended one leads.
+      const col = STATE_COL[k], ring = STATE_RING[k], ch = layer ? Math.min(1, N.charge) : 0, wk = layer ? N.wake : 0;
+      ctx.globalCompositeOperation = 'lighter';
+      glow(ctx, sprite(col, false), x, y, r * (2.8 + 1.4 * rec + 2.2 * ch + 5 * wk), a * (0.14 + 0.32 * rec + 0.3 * ch + 0.5 * wk) * Math.max(0.4, lit));
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = a * (0.88 + 0.12 * rec);
+      ctx.fillStyle = col; ctx.beginPath(); ctx.arc(x, y, r * 0.92, 0, TAU); ctx.fill();
+      if (layer && rpx > 4.5) {
+        ctx.globalAlpha = a * 0.85; ctx.strokeStyle = ring; ctx.lineWidth = 1.2 / z;
+        ctx.beginPath(); ctx.arc(x, y, r * 1.6, 0, TAU); ctx.stroke();
+        if (N.n.progress > 0) {
+          ctx.globalAlpha = a; ctx.strokeStyle = col; ctx.lineWidth = 2.2 / z;
+          ctx.beginPath(); ctx.arc(x, y, r * 1.6, -Math.PI / 2, -Math.PI / 2 + TAU * N.n.progress); ctx.stroke();
+        }
+      }
+      if (rec > 0.02) {
+        // A calm, slow ring that keeps breathing outward from the recommended lesson.
+        const ph = reduceMotion ? 0.35 : ((now / 2000) % 1);
+        ctx.globalAlpha = a * rec * 0.6 * (1 - ph); ctx.strokeStyle = col; ctx.lineWidth = 1.6 / z;
+        ctx.beginPath(); ctx.arc(x, y, r * (1.8 + 2.6 * smooth(ph)), 0, TAU); ctx.stroke();
+      }
+      if (wk > 0) {
+        ctx.globalAlpha = a * wk; ctx.strokeStyle = col; ctx.lineWidth = (2 * wk) / z;
+        ctx.beginPath(); ctx.arc(x, y, r * (1.8 + 7 * smooth(1 - wk)), 0, TAU); ctx.stroke();
+      }
+    } else {
+      ctx.globalAlpha = a * 0.9; ctx.fillStyle = C.nightInk;
+      ctx.beginPath(); ctx.arc(x, y, r * 0.85, 0, TAU); ctx.fill();
+      ctx.globalAlpha = a * 0.5; ctx.strokeStyle = C.cloud; ctx.lineWidth = 1 / z; ctx.stroke();
+      if (layer && rpx > 7) {
+        ctx.globalAlpha = a * 0.16; ctx.beginPath();
+        for (const d of N.dend) { ctx.moveTo(x + Math.cos(d.a) * r * 0.9, y + Math.sin(d.a) * r * 0.9); ctx.lineTo(x + Math.cos(d.a) * r * d.l * 0.85, y + Math.sin(d.a) * r * d.l * 0.85); }
+        ctx.stroke();
+      }
+    }
+    if (!layer) continue;
+    if (N.ping > 0) {
+      ctx.globalAlpha = N.ping * 0.7; ctx.strokeStyle = k === 'mastered' ? GREEN_LIGHT : STATE_COL[k]; ctx.lineWidth = 1.2 / z;
+      ctx.beginPath(); ctx.arc(x, y, r + smooth(1 - N.ping) * 14 / z, 0, TAU); ctx.stroke();
+    }
+    if (N.ignite > 0) {
+      ctx.globalCompositeOperation = 'lighter';
+      glow(ctx, sprite(C.foam), x, y, (r + 40 / z) * (1 + 2.5 * smooth(1 - N.ignite)), N.ignite * 0.85);
+      ctx.globalCompositeOperation = 'source-over';
+    }
+    if (N.hl > 0.02) {
+      ctx.globalAlpha = N.hl * 0.9 * a; ctx.strokeStyle = C.foam; ctx.lineWidth = 1.5 / z;
+      ctx.beginPath(); ctx.arc(x, y, r * 1.6 + 3 / z, 0, TAU); ctx.stroke();
+    }
+  }
+  ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
+}
+const mixMemo = new Map();
+function mixCache(h, t) { const k = h + ((t * 20) | 0); let v = mixMemo.get(k); if (!v) { v = mix(h, C.foam, Math.min(1, ((t * 20) | 0) / 20)); mixMemo.set(k, v); } return v; }
+
+// ── Screen-space labels ──
+function wrap(ctx, text, maxW, maxLines = 2) {
+  const words = text.split(' '), lines = [];
+  let line = '';
+  for (const w of words) { const t = line ? line + ' ' + w : w; if (ctx.measureText(t).width <= maxW || !line) line = t; else { lines.push(line); line = w; } }
+  if (line) lines.push(line);
+  if (lines.length > maxLines) { lines.length = maxLines; lines[maxLines - 1] += '…'; }
+  return lines;
+}
+function halo(ctx, text, x, y, fill, w = 4) {
+  ctx.lineWidth = w; ctx.lineJoin = 'round'; ctx.strokeStyle = 'rgba(5,22,54,0.85)'; ctx.strokeText(text, x, y);
+  ctx.fillStyle = fill; ctx.fillText(text, x, y);
+}
+const placed = [];
+const overlaps = (b) => b[0] < 8 || b[2] > W - 8 || b[1] < 8 || b[3] > H - 8 || placed.some((p) => b[0] < p[2] && b[2] > p[0] && b[1] < p[3] && b[3] > p[1]);
+
+function drawRegionLabels(ctx) {
+  // Domain name + one value, just outside the silhouette. Collisions shift a label away from the brain;
+  // a label that still collides (or would touch UI) is dropped rather than overlapped.
+  const n = narrow(), fs = n ? 13 : 16, lh = n ? 17 : 20;
+  for (const R of REGIONS) {
+    const lean = leanNode && leanNode.depth === 1 ? leanNode._prox : 0, mine = lean && leanNode.R === R;
+    const a = rootT * intro.labels * (mine ? 0.8 + 0.2 * lean : 0.8 - 0.4 * lean);
+    if (a < 0.02) continue;
+    const spec = n ? R.phone : R.label, nm = R.dom.label, cutAt = nm.indexOf(' & ');
+    ctx.font = `${fs}px ${HEAD}`;
+    const lines = ctx.measureText(nm).width > (n ? 104 : 160) && cutAt > 0 ? [nm.slice(0, cutAt), nm.slice(cutAt + 1)] : [nm];
+    const widths = lines.map((l) => ctx.measureText(l).width);
+    const p = pct(R.dom.m);
+    ctx.font = `800 13px ${BODY}`;
+    const pw = ctx.measureText(p).width;
+    const bw = Math.max(...widths.map((w, i) => w + (i === lines.length - 1 ? pw + 8 : 0))), bh = lines.length * lh;
+    const lx = sx(spec.L[0]), ly = sy(spec.L[1]), al = spec.align;
+    const x0 = clamp(al === 'right' ? lx - bw : al === 'left' ? lx : lx - bw / 2, 12, W - 12 - bw);
+    let y0 = al === 'above' ? ly - bh : al === 'below' ? ly : ly - bh / 2, box = null;
+    for (let k = 0; k < 4; k++, y0 += al === 'below' ? lh : -lh) {
+      const b = [x0 - 4, y0 - 4, x0 + bw + 4, y0 + bh + 4];
+      if (!overlaps(b)) { box = b; break; }
+    }
+    if (!box) continue;
+    placed.push(box);
+    ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+    lines.forEach((l, i) => {
+      ctx.globalAlpha = a; ctx.font = `${fs}px ${HEAD}`; halo(ctx, l, x0, y0 + i * lh, C.foam, 3);
+      if (i === lines.length - 1) { ctx.globalAlpha = a * 0.95; ctx.font = `800 13px ${BODY}`; halo(ctx, p, x0 + widths[i] + 8, y0 + i * lh + (fs - 13) / 2 + 1, R.light, 3); }
+    });
+  }
+}
+function drawTopicLabels(ctx) {
+  const FR = focus === root ? (leanNode && leanNode.depth === 1 ? leanNode.R : null) : regionOfNav(focus);
+  if (!FR) return;
+  const base = focus === root ? Math.max(0, (leanNode._prox - 0.35) / 0.65) * 0.8 : 1;
+  for (const t of FR.dom.children) {
+    const T = t.T;
+    const a = base * T.tv * (1 - T.fT) * FR.rv * intro.labels;
+    if (a < 0.03) continue;
+    ctx.font = `800 13px ${BODY}`;
+    const w = ctx.measureText(t.label).width, x = sx(T.cx);
+    let y = sy(T.cy) - T.rad * cam.z - 32;
+    let box = [x - w / 2 - 4, y - 2, x + w / 2 + 4, y + 18];
+    if (overlaps(box)) { y = sy(T.cy) + T.rad * cam.z + 16; box = [x - w / 2 - 4, y - 2, x + w / 2 + 4, y + 18]; }
+    if (overlaps(box)) continue;
+    placed.push(box);
+    const lean = leanNode === t ? t._prox : 0;
+    ctx.globalAlpha = a * (0.85 + 0.15 * lean); ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    halo(ctx, t.label, x, y, C.foam);
+  }
+}
+const fmtDate = (d) => (d ? d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '');
+function lessonLine(N) {
+  const s = vstate(N), l = N.n;
+  if (s === 'mastered') return { text: `Mastered ${fmtDate(l.masteredAt)}`, col: GREEN_LIGHT };
+  if (s === 'frontier') return l.progress > 0 ? { text: `In progress · ${pct(l.progress)}`, col: ORANGE } : { text: 'Ready to start', col: C.sun };
+  return { text: graph.blockerText(l), col: C.cloud };
+}
+function drawLessonLabels(ctx) {
+  for (const T of topics) {
+    const la = clamp((T.fT - 0.55) / 0.4, 0, 1);
+    if (la < 0.02) continue;
+    const obst = T.lessons.map((N) => { const r = N.rpx * 1.9 + 2; return [N.sx - r, N.sy - r, N.sx + r, N.sy + r]; });
+    placed.push(...obst);
+    T.lessons.forEach((N, k) => {
+      const a = la * T.tv * N.R.rv;
+      if (a < 0.05 || N === hoverLeaf || (N === recN && pill.shown)) return;
+      const mine = placed.splice(placed.indexOf(obst[k]), 1)[0];
+      ctx.font = `700 13px ${BODY}`;
+      const lines = wrap(ctx, N.n.label, 140);
+      const bw = Math.max(...lines.map((l) => ctx.measureText(l).width)), bh = lines.length * 16;
+      const gap = N.rpx * 1.8 + 8, pref = N.x >= T.cx ? 1 : -1;
+      const cands = [
+        [pref, pref > 0 ? N.sx + gap : N.sx - gap - bw, N.sy - bh / 2],
+        [-pref, -pref > 0 ? N.sx + gap : N.sx - gap - bw, N.sy - bh / 2],
+        [0, N.sx - bw / 2, N.sy + gap - 4],
+        [0, N.sx - bw / 2, N.sy - gap - bh + 4],
+      ];
+      let pickd = null;
+      for (const [side, bx0, by0] of cands) { const b = [bx0 - 3, by0 - 2, bx0 + bw + 3, by0 + bh + 2]; if (!overlaps(b)) { pickd = [side, b]; break; } }
+      placed.push(mine);
+      if (!pickd) return;
+      const [side, box] = pickd;
+      placed.push(box);
+      const ks = sk(N);
+      ctx.textAlign = side > 0 ? 'left' : side < 0 ? 'right' : 'center'; ctx.textBaseline = 'top';
+      const tx = side > 0 ? box[0] + 3 : side < 0 ? box[2] - 3 : N.sx;
+      ctx.globalAlpha = a * (ks === 'locked' ? 0.6 : 1);
+      lines.forEach((l, i) => halo(ctx, l, tx, box[1] + 2 + i * 16, ks === 'mastered' ? C.foam : STATE_COL[ks]));
+    });
+  }
+}
+const pillEl = document.getElementById('nextPill'), pillText = document.getElementById('nextText');
+const pill = { N: null, from: null, t: 1, ox: 0, oy: 0, side: 0, shown: false, hover: false, w: 0, h: 32, ready: false, alpha: 0, ax: 0, ay: 0 };
+function placePill(ctx, dt) {
+  const N = recN;
+  if (N !== pill.N) {
+    if (pill.N && pill.ready) { pill.from = { x: pill.ax, y: pill.ay }; pill.t = 0; }
+    pill.N = N;
+    if (N) { pillText.textContent = `Next: ${N.n.label}`; pillEl.setAttribute('aria-label', `Next lesson: ${N.n.label}`); pill.w = pillEl.offsetWidth; pill.h = pillEl.offsetHeight || 32; }
+  }
+  const visible = !!N && introDone && intro.labels > 0.6 && card.lesson !== N.n && N.R.rv > 0.6 && N.T.tv > 0.6
+    && (focus.depth < 2 || N.T.node === focus) && N.sx > 8 && N.sx < W - 8 && N.sy > 8 && N.sy < H - 8;
+  pill.shown = visible;
+  pillEl.classList.toggle('show', visible);
+  pill.alpha += ((visible ? 1 : 0) - pill.alpha) * (1 - Math.exp(-dt * 14));
+  if (!N) return;
+  pillEl.dataset.state = sk(N);
+  pillEl.classList.toggle('hot', hoverLeaf === N || pill.hover);
+  // When the recommendation changes, the anchor glides from the old neuron to the new one.
+  pill.t = Math.min(1, pill.t + dt / 0.7);
+  const e = easeInOut(pill.t);
+  const ax = pill.from && pill.t < 1 ? lerp(pill.from.x, N.sx, e) : N.sx;
+  const ay = pill.from && pill.t < 1 ? lerp(pill.from.y, N.sy, e) : N.sy;
+  pill.ax = ax; pill.ay = ay;
+  const w = pill.w, h = pill.h, g = N.rpx * 1.9 + 12;
+  const cands = [[0, g, -h / 2], [1, -g - w, -h / 2], [2, -w / 2, -g - h], [3, -w / 2, g]];
+  let pick = null;
+  for (const c of [cands[pill.side], ...cands.filter((c) => c[0] !== pill.side)]) {
+    const x = N.sx + c[1], y = N.sy + c[2];
+    if (!overlaps([x - 4, y - 4, x + w + 4, y + h + 4])) { pick = c; break; }
+  }
+  pick = pick || cands[pill.side];
+  pill.side = pick[0];
+  const k = pill.ready ? 1 - Math.exp(-dt * 14) : 1;
+  pill.ox += (pick[1] - pill.ox) * k; pill.oy += (pick[2] - pill.oy) * k;
+  const x = clamp(ax + pill.ox, 8, W - w - 8), y = clamp(ay + pill.oy, 8, H - h - 8);
+  pillEl.style.transform = `translate3d(${x.toFixed(1)}px, ${y.toFixed(1)}px, 0)`;
+  if (visible) pill.ready = true;
+  if (pill.alpha < 0.02) return;
+  placed.push([x - 4, y - 4, x + w + 4, y + h + 4]);
+  // A short tether ties the pill to its neuron.
+  const tx = clamp(ax, x, x + w), ty = clamp(ay, y + 4, y + h - 4), d = Math.hypot(tx - ax, ty - ay), r0 = N.rpx * 1.6 + 4;
+  if (d > r0 + 2) {
+    ctx.globalAlpha = pill.alpha * 0.9; ctx.strokeStyle = STATE_COL[sk(N)]; ctx.lineWidth = 1.5; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(ax + ((tx - ax) / d) * r0, ay + ((ty - ay) / d) * r0); ctx.lineTo(tx, ty); ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+}
+pillEl.addEventListener('pointerenter', () => { pill.hover = true; score.sfx('hover'); });
+pillEl.addEventListener('pointerleave', () => { pill.hover = false; });
+pillEl.addEventListener('click', () => { if (pill.N) card.open(pill.N.n); });
+
+function drawLeanPill(ctx) {
+  if (!leanNode || leanType !== 'out' || leanNode._prox < 0.15 || !pointer.in) return;
+  const text = leanNode === root ? '‹ Whole brain' : `‹ ${leanNode.R.lobe} · ${leanNode.label}`;
+  ctx.font = `800 13px ${BODY}`;
+  const w = ctx.measureText(text).width + 32, h = 32;
+  const x = clamp(pointer.x - w / 2, 8, W - w - 8);
+  let y = pointer.y + 24;
+  if (y + h > H - 8 || safe.list.some((r) => x < r[2] && x + w > r[0] && y < r[3] && y + h > r[1])) y = pointer.y - 24 - h;
+  y = clamp(y, 8, H - h - 8);
+  ctx.globalAlpha = clamp((leanNode._prox - 0.15) / 0.5, 0, 1);
+  ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.beginPath(); ctx.roundRect(x, y + 3, w, h, 16); ctx.fill();
+  ctx.fillStyle = C.nightInk; ctx.beginPath(); ctx.roundRect(x, y, w, h, 16); ctx.fill();
+  ctx.strokeStyle = rgba(C.wave1, 0.35); ctx.lineWidth = 1.5; ctx.stroke();
+  ctx.fillStyle = C.foam; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(text, x + w / 2, y + h / 2 + 0.5);
+  ctx.globalAlpha = 1;
+}
+
+// ── MRI scan overlay ──
+function brainScreenBox() { return [sx(BRAIN_BOX[0]), sy(BRAIN_BOX[1]), sx(BRAIN_BOX[2]), sy(330)]; }
+function scanX() { const b = brainScreenBox(); return lerp(b[0] - 50, b[2] + 50, intro.scan); }
+function applyMask(ctx, scale, xe) {
+  ctx.setTransform(scale, 0, 0, scale, 0, 0);
+  ctx.globalCompositeOperation = 'destination-in';
+  const g = ctx.createLinearGradient(xe - 70, 0, xe, 0);
+  g.addColorStop(0, 'rgba(0,0,0,1)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  ctx.globalCompositeOperation = 'source-over';
+}
+function drawGhost(ctx, xe, now) {
+  // Pre-scan wireframe (right of the scanline), breathing faintly.
+  ctx.save();
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0); ctx.beginPath(); ctx.rect(xe - 10, 0, W, H); ctx.clip();
+  worldTransform(ctx, DPR);
+  const pre = intro.started ? 0 : 1;
+  ctx.globalAlpha = 0.16 + 0.22 * pre + 0.07 * Math.sin(now / 900); ctx.strokeStyle = C.wave2; ctx.lineWidth = (1.2 + 0.6 * pre) / cam.z;
+  ctx.setLineDash([5 / cam.z, 6 / cam.z]);
+  ctx.stroke(PATHS.cerebrum); ctx.stroke(PATHS.cerebellum);
+  ctx.setLineDash([]);
+  ctx.restore();
+}
+function drawScanline(ctx, xe, now) {
+  const b = brainScreenBox(), top = b[1] - 40, bot = b[3] + 30;
+  // Afterglow on freshly scanned tissue, clipped to the silhouette.
+  ctx.save(); worldTransform(ctx, DPR);
+  const sil = new Path2D(); sil.addPath(PATHS.cerebrum); sil.addPath(PATHS.cerebellum); sil.addPath(PATHS.stem);
+  ctx.clip(sil);
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  ctx.globalCompositeOperation = 'lighter';
+  let g = ctx.createLinearGradient(xe - 240, 0, xe, 0);
+  g.addColorStop(0, rgba(C.wave2, 0)); g.addColorStop(1, rgba(C.wave2, 0.2));
+  ctx.fillStyle = g; ctx.globalAlpha = 1; ctx.fillRect(xe - 240, top, 240, bot - top);
+  ctx.restore();
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  ctx.globalCompositeOperation = 'lighter';
+  g = ctx.createLinearGradient(xe - 22, 0, xe + 22, 0);
+  g.addColorStop(0, rgba(C.wave1, 0)); g.addColorStop(0.5, rgba(C.wave1, 0.55)); g.addColorStop(1, rgba(C.wave1, 0));
+  ctx.fillStyle = g; ctx.fillRect(xe - 22, top, 44, bot - top);
+  ctx.fillStyle = C.foam; ctx.globalAlpha = 0.95; ctx.fillRect(xe - 1, top, 2, bot - top);
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = 1;
+}
+// Screen areas owned by UI (dock, music button, status/crumbs, open lesson card): labels and tooltips stay clear.
+function safeRects(now) {
+  if (now - safe.at > 150) {
+    safe.at = now;
+    safe.list = ['.kg-dock', '.kg-sound', '#hud', '.kg-card.open'].map((q) => document.querySelector(q)?.getBoundingClientRect())
+      .filter((r) => r && r.width).map((r) => [r.left - 8, r.top - 8, r.right + 8, r.bottom + 8]);
+  }
+  return safe.list;
+}
+const qz = (v, n = 64) => Math.round(v * n);
+let stateVersion = 0, revealed = 0;
+const perf = { n: 0, sum: 0, max: 0, base: 0, blur: 0 };
+function draw(now) {
+  const scanning = intro.scan < 1;
+  const xe = scanning ? scanX() : W + 200;
+  // Reveal neurons as the scanline passes them (one soft scanner blip each).
+  if (intro.started && scanning) for (const N of lessons) {
+    if (N.revealed || sx(N.bx) > xe) continue;
+    N.revealed = true; N.ping = 1; revealed++;
+    score.sfx('step');
+  }
+  const started = intro.started;
+  for (const e of edges) if (e.kind !== 'decor') edgeCtrl(e);
+  const camK = `${cam.x.toFixed(2)},${cam.y.toFixed(2)},${cam.z.toFixed(4)},${VP.cx},${VP.cy},${W},${H},${DPR}`;
+  const regK = REGIONS.map((R) => `${qz(R.rv)},${qz(R.rs)},${qz(R.dm, 100)},${qz(R.flare, 32)}`).join('|');
+  const scanK = scanning ? `|s${xe.toFixed(1)}` : '';
+  // Base: static tissue, redrawn only when what it shows has changed.
+  const baseKey = started ? `${camK}|${regK}|${qz(intro.lit)}|${focus.depth === 2 ? regionOfNav(focus).key : ''}${scanK}` : 'off';
+  if (baseKey !== layerKeys.base) {
+    layerKeys.base = baseKey; perf.base++;
+    ax.setTransform(1, 0, 0, 1, 0, 0); ax.clearRect(0, 0, baseCv.width, baseCv.height);
+    if (started) { drawBase(); if (scanning) applyMask(ax, DPR, xe); }
+  }
+  // Blur: defocused lobes and topics; empty (and free) when everything is in focus.
+  const anyBlur = started && (REGIONS.some((R) => R.rs < 0.995) || topics.some((T) => T.ts < 0.995));
+  const blurKey = anyBlur ? `${camK}|${regK}|${topics.map((T) => `${qz(T.tv)},${qz(T.ts)},${qz(T.fT)}`).join(';')}|${stateVersion}|${qz(intro.lit)}|${revealed}${scanK}` : 'off';
+  if (blurKey !== layerKeys.blur) {
+    layerKeys.blur = blurKey; perf.blur++;
+    bx.setTransform(1, 0, 0, 1, 0, 0); bx.clearRect(0, 0, blurCv.width, blurCv.height);
+    if (anyBlur) { drawBlurLayer(); if (scanning) applyMask(bx, BR, xe); }
+  }
+  // Crisp: everything alive.
+  cx.setTransform(1, 0, 0, 1, 0, 0); cx.clearRect(0, 0, crisp.width, crisp.height);
+  if (started) {
+    worldTransform(cx, DPR); drawEdges(cx, 1, now); drawPulses(cx); drawNeurons(cx, 1, now);
+    if (scanning) applyMask(cx, DPR, xe);
+  } else for (const N of lessons) { N.sx = sx(N.x); N.sy = sy(N.y); }
+  if (scanning) drawGhost(cx, started ? xe : -100, now);
+  if (started && scanning && intro.scan > 0) drawScanline(cx, xe, now);
+  // Screen-space labels, kept clear of UI and of each other.
+  cx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  placed.length = 0;
+  if (intro.labels > 0.01) { placed.push(...safeRects(now)); drawRegionLabels(cx); }
+  placePill(cx, frameDt);
+  if (intro.labels > 0.01) { drawLessonLabels(cx); drawTopicLabels(cx); }
+  drawLeanPill(cx);
+  if (intro.flash > 0.01) {
+    // The light-up: one soft wavefront through the tissue (no full-screen bloom).
+    cx.save(); worldTransform(cx, DPR); cx.clip(PATHS.cerebrum);
+    cx.globalCompositeOperation = 'lighter';
+    const k = smooth(1 - intro.flash), rr = 60 + k * 640, inner = Math.max(0, rr - 160);
+    const wave = cx.createRadialGradient(-20, -60, inner, -20, -60, rr + 24);
+    wave.addColorStop(0, rgba(C.wave1, 0)); wave.addColorStop(0.8, rgba(C.wave1, 0.3)); wave.addColorStop(0.92, rgba(C.foam, 0.4)); wave.addColorStop(1, rgba(C.wave1, 0));
+    cx.globalAlpha = intro.flash; cx.fillStyle = wave; cx.fillRect(-700, -700, 1400, 1400);
+    cx.restore();
+    cx.globalCompositeOperation = 'source-over';
+  }
+  cx.globalAlpha = 1;
+}
+
+// ════════════════════════ HUD, crumbs, tooltip ════════════════════════
+const hudEl = document.getElementById('hud'), hintEl = document.getElementById('hint');
+const $f = document.getElementById('hudFiring'), $s = document.getElementById('hudScore');
+const roEl = document.getElementById('readout'), roText = document.getElementById('roText');
+// One short hint, shown once after the intro; it fades on the first pointer move or after ~4s and never returns.
+const hint = { shownAt: 0, gone: false };
+function showHint() { hintEl.textContent = matchMedia('(hover: none)').matches ? 'Tap a region to zoom in.' : 'Move toward a region to zoom in.'; hintEl.hidden = false; hint.shownAt = performance.now(); setTimeout(dismissHint, 4200); }
+function dismissHint() { if (hint.gone || !hint.shownAt) return; hint.gone = true; hintEl.classList.add('gone'); setTimeout(() => { hintEl.hidden = true; }, 950); }
+document.getElementById('hudTotal').textContent = graph.stats().total;
+const hud = { firing: 0, wired: 0, score: 400, tFiring: 0, tWired: 0, tScore: 400, stepAt: 0, countUp: null };
+function setHudTargets(s = graph.stats(), instant = false) {
+  hud.tFiring = s.mastered; hud.tWired = s.mastery; hud.tScore = s.score;
+  if (instant) { hud.firing = s.mastered; hud.wired = s.mastery; hud.score = s.score; renderHud(); }
+}
+function popEl(el) { el.classList.remove('pop'); void el.offsetWidth; el.classList.add('pop'); }
+function renderHud() { $f.textContent = hud.firing; $s.textContent = hud.score; }
+function hudUpdate(dt, now) {
+  if (hud.countUp) {
+    const k = clamp((now - hud.countUp.t0) / hud.countUp.dur, 0, 1), e = 1 - Math.pow(1 - k, 3);
+    hud.firing = Math.round(hud.tFiring * e); hud.score = Math.round((400 + (hud.tScore - 400) * e) / 10) * 10;
+    renderHud();
+    if (k >= 1) hud.countUp = null;
+  } else if (introDone && now >= hud.stepAt) {
+    let changed = false;
+    if (hud.firing !== hud.tFiring) { hud.firing += Math.sign(hud.tFiring - hud.firing); popEl($f); changed = true; }
+    if (hud.score !== hud.tScore) { hud.score += Math.sign(hud.tScore - hud.score) * 10; if (hud.score === hud.tScore) popEl($s); changed = true; }
+    if (changed) { renderHud(); hud.stepAt = now + 70; }
+  }
+}
+
+const crumbsEl = document.getElementById('crumbs');
+function renderCrumbs() {
+  crumbsEl.replaceChildren();
+  if (focus === root) return;
+  graph.pathTo(focus).forEach((n, i, arr) => {
+    if (i) { const s = document.createElement('span'); s.className = 'crumb-sep'; s.textContent = '›'; crumbsEl.append(s); }
+    const b = document.createElement('button');
+    b.className = 'crumb';
+    if (n.depth >= 1) { const dot = document.createElement('i'); dot.style.background = n.domain.R.hue; b.append(dot); }
+    const nw = innerWidth < 700;
+    b.append(n === root ? `${nw ? 'Brain' : 'Whole brain'} · ${pct(root.m)}` : n.depth === 1 ? (nw ? n.label : `${n.R.lobe} · ${n.label}`) : n.label);
+    if (i === arr.length - 1) b.setAttribute('aria-current', 'true');
+    let timer = 0; // hovering a crumb also navigates, like v1
+    b.addEventListener('mouseenter', () => { timer = setTimeout(() => setFocus(n, { sound: 'back' }), 220); });
+    b.addEventListener('mouseleave', () => clearTimeout(timer));
+    b.addEventListener('click', () => { clearTimeout(timer); setFocus(n, { sound: 'back' }); });
+    crumbsEl.append(b);
+  });
+}
+
+const tip = document.getElementById('tip');
+let tipNode = null;
+function updateTip() {
+  if (hoverLeaf !== tipNode) {
+    tipNode = hoverLeaf;
+    if (tipNode) {
+      const l = tipNode.n, s = vstate(tipNode), line = lessonLine(tipNode);
+      tip.replaceChildren();
+      const b = document.createElement('b'); b.textContent = l.label;
+      const st = document.createElement('span'); st.className = 'st'; st.style.color = line.col;
+      const dot = document.createElement('i'); dot.style.background = line.col; st.append(dot, line.text);
+      tip.append(b, st);
+      if (s === 'frontier') { const act = document.createElement('span'); act.className = 'act'; act.textContent = 'Click to start'; tip.append(act); }
+    }
+    tip.classList.toggle('show', !!tipNode);
+  }
+  if (tipNode) {
+    const ax = pointer.in ? pointer.x : tipNode.sx, ay = pointer.in ? pointer.y : tipNode.sy;
+    const tw = tip.offsetWidth, th = tip.offsetHeight, g = 16;
+    const hits = (x, y) => x < 8 || y < 8 || x + tw > W - 8 || y + th > H - 8 || safeRects(performance.now()).some((r) => x < r[2] && x + tw > r[0] && y < r[3] && y + th > r[1]);
+    const opts = [[ax + g, ay + g], [ax - g - tw, ay + g], [ax + g, ay - g - th], [ax - g - tw, ay - g - th]];
+    const [x, y] = opts.find(([x0, y0]) => !hits(x0, y0)) || [clamp(ax + g, 8, W - tw - 8), clamp(ay + g, 8, H - th - 8)];
+    tip.style.left = x + 'px'; tip.style.top = y + 'px';
+  }
+}
+
+// ════════════════════════ Chrome, card, completion ════════════════════════
+const { score, caption } = mountChrome({
+  id: 'second-brain',
+  eyebrow: 'Second brain · SAT',
+  title: 'We copied your brain.',
+  tagline: 'This is exactly what the SAT looks like inside your head right now.',
+  gateBackground: 'radial-gradient(ellipse at 50% 45%, rgba(10,43,100,0.5) 0%, rgba(10,43,100,0.72) 45%, rgba(5,22,54,0.96) 100%)',
+  dark: true,
+  beginLabel: 'Scan my brain',
+  onBegin: () => startIntro(),
+});
+// QA: with ?debug=1 every semantic sound event is logged with its timestamp (window.__sfxLog).
+if (dbgEl) { const play = score.sfx; window.__sfxLog = []; score.sfx = (name, o) => { window.__sfxLog.push([Math.round(performance.now()), name]); return play(name, o); }; }
+const card = createLessonCard(graph, {
+  score, caption,
+  onOpen: (n) => { cardOpen = true; selected = NB.get(n.id); safe.at = 0; const t = topicOf(n); if (focus !== root && focus !== t) setFocus(t, true); },
+  onClose: () => { cardOpen = false; selected = null; lastCardClose = performance.now(); safe.at = 0; score.sfx('back'); },
+  onComplete: (evt) => onComplete(evt),
+});
+
+function onComplete(evt) {
+  const now = performance.now();
+  const N = NB.get(evt.lesson.id);
+  stateVersion++;
+  N.ignite = 1; N.shock = 1; N.spike = 1.5; N.lastFire = now;
+  N.R.flare = 1; cascadeUntil = now + 2200;
+  for (const l of evt.unlocked) { const U = NB.get(l.id); U.hold = 'locked'; U.holdUntil = now + 1900 + frand() * 200; }
+  for (const { e, out } of N.adj) {
+    const o = out ? e.b : e.a;
+    if (o.lesson) spawn(e, out, K.ignite, { hops: 2, speed: 0.9 });
+    else spawn(e, out, K.dend, { hops: 3, speed: 1.4, size: 1 });
+  }
+  fire(N, now, 1.2);
+  setHudTargets(evt.stats);
+  boost = 0.35; score.setIntensity(0.92, 0.6);
+  renderCrumbs();
+}
+
+// ════════════════════════ Intro timeline ════════════════════════
+Object.assign(intro, { labels: 0 });
+function introEvents() {
+  return [
+    { t: 0, run: () => { roEl.classList.add('show'); score.setIntensity(0.14, 0.6); } },
+    { t: T_SCAN0, run: () => score.setIntensity(0.5, T_SCAN1 - T_SCAN0) },
+    { t: T_SCAN1, run: () => { score.sfx('riser'); roText.textContent = `${graph.stats().mastered} neurons firing`; score.setIntensity(0.68, T_IMPACT - T_SCAN1); } },
+    { t: T_IMPACT, run: impactNow },
+    { t: T_IMPACT + 0.7, run: () => roEl.classList.remove('show'), settle: () => roEl.classList.remove('show') },
+    { t: T_END, run: finishIntro, settle: finishIntro },
+  ];
+}
+function impactNow() {
+  const now = performance.now();
+  score.sfx('intro');
+  intro.flash = reduceMotion ? 0 : 1;
+  for (const N of lessons) {
+    if (N.n.state === 'mastered') N.fireAt = now + frand() * 260;
+    else if (N.n.state === 'frontier') N.charge = 1;
+  }
+  for (const R of REGIONS) R.flare = 0.55 + 0.45 * R.dom.m;
+  if (!reduceMotion) camV.z += 2.2;
+  caption('This is your second brain.', 3800);
+  score.setIntensity(0.85, 0.4);
+  boost = 0.25;
+}
+function finishIntro() {
+  if (introDone) return;
+  introDone = true; navOn = true;
+  if (intro.offset >= T_END) setHudTargets(undefined, true);
+  else { setHudTargets(); hud.countUp = { t0: performance.now(), dur: 1600 }; }
+  hudEl.classList.add('show');
+  if (intro.offset < T_END || !params.get('demo')) showHint();
+  for (const N of lessons) N.revealed = true;
+}
+function startIntro() {
+  intro.started = true; intro.t0 = performance.now();
+  intro.events = introEvents();
+  const off = intro.offset;
+  if (off > 0) for (const ev of intro.events) if (ev.t < off) { ev.fired = true; ev.settle?.(); }
+  if (off >= T_END) for (const N of lessons) N.revealed = true;
+}
+function introUpdate(now, dt) {
+  if (!intro.started) { intro.scan = 0; intro.lit = 0; intro.activity = 0; intro.zoomMul = reduceMotion ? 1 : 0.9; intro.labels = 0; return; }
+  const t = (now - intro.t0) / 1000 + intro.offset;
+  for (const ev of intro.events) if (!ev.fired && t >= ev.t) { ev.fired = true; ev.run(); }
+  intro.scan = easeInOut(clamp((t - T_SCAN0) / (T_SCAN1 - T_SCAN0), 0, 1));
+  if (t < T_SCAN1) { intro.lit = 0.3; intro.activity = 0; }
+  else if (t < T_IMPACT) { const k = (t - T_SCAN1) / (T_IMPACT - T_SCAN1); intro.lit = 0.3 + 0.32 * k * k; intro.activity = 0.4 * k * k; }
+  else { intro.lit = Math.min(1, 0.62 + (t - T_IMPACT) * 4); intro.activity = 1; }
+  intro.zoomMul = reduceMotion ? 1 : t >= T_IMPACT ? 1 : lerp(0.9, 0.96, clamp(t / T_IMPACT, 0, 1));
+  intro.labels = clamp((t - T_IMPACT - 0.4) / 0.8, 0, 1);
+  intro.flash = Math.max(0, intro.flash - dt * 1.1);
+}
+
+// ════════════════════════ Music follows activity and depth ════════════════════════
+let boost = 0, musicAt = 0;
+function musicUpdate(now, dt) {
+  boost = Math.max(0, boost - dt * 0.08);
+  if (!introDone || now < musicAt) return;
+  musicAt = now + 500;
+  const depth = focus.depth / 2;
+  const act = clamp(fireRate / 40, 0, 1);
+  score.setIntensity(clamp(0.3 + 0.2 * root.m + 0.14 * depth + 0.22 * act + boost, 0, 1), 2.5);
+}
+
+// ════════════════════════ Input ════════════════════════
+function movePointer(x, y, now) {
+  const d = Math.hypot(x - pointer.x, y - pointer.y);
+  if (pointer.in && d > 0.5) {
+    const ms = Math.max(1, now - pointer.lastMoveAt);
+    pointer.vx = lerp(pointer.vx, (x - pointer.x) / ms, 0.35); pointer.vy = lerp(pointer.vy, (y - pointer.y) / ms, 0.35);
+  }
+  if (pointer.in && d > 0.5) { pointer.lastMoveAt = now; nav.sinceRest += d; if (now >= lockUntil) pointer.travel += d; if (hint.shownAt && now - hint.shownAt > 500) dismissHint(); }
+  pointer.x = x; pointer.y = y; pointer.in = true;
+  updateHover(); setCursor(); // hover feedback the moment the pointer moves, not a frame later
+}
+crisp.addEventListener('pointermove', (e) => { if (e.pointerType !== 'touch') movePointer(e.clientX, e.clientY, performance.now()); });
+crisp.addEventListener('pointerleave', () => { pointer.in = false; updateHover(); crisp.style.cursor = 'default'; });
+crisp.addEventListener('pointerup', (e) => {
+  if (!navOn) return;
+  const x = e.clientX, y = e.clientY;
+  const leaf = leafAt(x, y);
+  if (leaf) { card.open(leaf.n); return; }
+  const R = regionAt(wx(x), wy(y));
+  if (focus === root) { if (R) setFocus(R.dom); return; }
+  const t = topicAt(x, y);
+  if (t && t !== focus) { setFocus(t); return; }
+  if (focus.depth === 1 && R && R.dom !== focus) { setFocus(R.dom); return; }
+  if (!t && (!R || e.pointerType === 'touch')) setFocus(focus.parent, { sound: 'back' });
+});
+addEventListener('keydown', (e) => {
+  if (!navOn) return;
+  if (e.key === 'Escape' && !cardOpen && performance.now() - lastCardClose > 80 && focus.parent) setFocus(focus.parent, { sound: 'back' });
+});
+
+// ════════════════════════ QA params & loop ════════════════════════
+const demo = params.get('demo');
+intro.offset = params.has('t') ? parseFloat(params.get('t')) || 0 : demo ? 99 : 0;
+const findDomain = (s) => graph.domains.find((d) => d.label.toLowerCase().startsWith(s.toLowerCase()) || d.R.key === s.toLowerCase());
+const findTopic = (s) => topics.find((T) => T.node.label.toLowerCase() === s.toLowerCase())?.node;
+const findLesson = (s) => graph.leaves.find((l) => l.label.toLowerCase() === s.toLowerCase());
+function runDemo() {
+  if (!demo) return;
+  if (demo === 'zoom') setFocus(findDomain(params.get('region') || 'Algebra'), true);
+  if (demo === 'topic' || demo === 'hover') setFocus(findTopic(params.get('topic') || 'Linear functions') || root, true);
+  if (demo === 'card' || demo === 'complete') {
+    const l = params.get('lesson') && params.get('lesson') !== 'next' ? findLesson(params.get('lesson')) : recommend()?.n;
+    if (l) card.open(l);
+    if (demo === 'complete') setTimeout(() => card.el.querySelector('.actions .kg-btn.primary')?.click(), 450);
+  }
+  snapCamera();
+  if (demo === 'hover') { forcedHover = focus.T.lessons.find((N) => N.n.state === 'frontier') || focus.T.lessons[0]; }
+}
+
+renderHud();
+VP = viewport();
+{ const f = frameFor(root); cam.x = f.x; cam.y = f.y; cam.z = f.z * (reduceMotion ? 1 : 0.9); }
+renderCrumbs();
+let last = performance.now(), paused = false, demoRan = false;
+let frameDt = 0.016;
+function tick(now) {
+  now = Math.max(now, last); // one monotonic clock for rAF and the timer fallback
+  const dt = Math.min(0.05, (now - last) / 1000);
+  frameDt = dt;
+  recN = introDone ? recommend() : null;
+  last = clock = now;
+  VP = viewport();
+  introUpdate(now, dt);
+  if (introDone && !demoRan) { demoRan = true; runDemo(); }
+  handlePointer(now);
+  computeTargets();
+  animate(dt);
+  simulate(dt, now);
+  draw(now);
+  hudUpdate(dt, now);
+  musicUpdate(now, dt);
+}
+let dbgFrames = 0, dbgAt = 0;
+function frame() {
+  const now = performance.now();
+  if (!paused) { tick(now); const ms = performance.now() - now; perf.n++; perf.sum += ms; perf.max = Math.max(perf.max, ms); }
+  if (dbgEl) { dbgFrames++; dbgEl.dataset.total = (+dbgEl.dataset.total || 0) + 1; dbgEl.dataset.now = Math.round(now); if (now - dbgAt > 1000) { dbgEl.textContent += `t=${(now / 1000).toFixed(1)} frames=${dbgFrames} pulses=${live.length} fireRate=${fireRate.toFixed(1)} z=${cam.z.toFixed(2)} focus=${focus.label}\n`; dbgFrames = 0; dbgAt = now; } }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+// Headless Chrome under --virtual-time-budget starves rAF; timers still run, so tick from a timer
+// whenever rAF has gone quiet. In a real foreground tab rAF keeps `last` fresh and this never fires.
+setInterval(() => { const now = performance.now(); if (!paused && !document.hidden && now - last > 120) tick(now); }, 16);
+window.__brain = {
+  graph, regions: REGIONS, lessons, topics, cam, card, setFocus, snapCamera, movePointer, tick,
+  toScreen: (x, y) => [sx(x), sy(y)],
+  regionScreen: (name) => { const R = REG[name]; return [sx(R.cx), sy(R.cy)]; },
+  topicScreen: (name) => { const T = topics.find((t) => t.node.label === name); return [sx(T.cx), sy(T.cy)]; },
+  lessonScreen: (name) => { const N = lessons.find((n) => n.n.label === name); return [N.sx, N.sy]; },
+  pillScreen: () => { const r = pillEl.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; },
+  get rec() { return recN && recN.n.label; },
+  get focus() { return focus; }, get pulses() { return live.length; }, get fireRate() { return fireRate; },
+  pause(v) { paused = v; last = performance.now(); },
+  perf() { const r = { frames: perf.n, avgMs: +(perf.sum / Math.max(1, perf.n)).toFixed(2), maxMs: +perf.max.toFixed(2), baseRedraws: perf.base, blurRedraws: perf.blur }; Object.assign(perf, { n: 0, sum: 0, max: 0, base: 0, blur: 0 }); return r; },
+};
+</script>
+</body>
+</html>

@@ -1,0 +1,1923 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Brain 3D</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="../shared/dolphin.css">
+<style>
+  :root {
+    color-scheme: dark;
+    --prog: #FF9F43; --prog-shadow: #C2650F; --ready: #FFF44E; --ready-shadow: #D2AE00;
+  }
+  html, body { overflow: hidden; }
+  body {
+    color: var(--foam);
+    background-color: #061B44;
+    background-image: radial-gradient(ellipse 78% 72% at 50% 47%, #0F3878 0%, #0A2B64 40%, #071F4C 70%, #04122F 100%);
+  }
+  #view { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+
+  /* Status (top-left): the one piece of chrome at rest. The back crumb joins it only inside a region. */
+  .status {
+    position: fixed; top: 24px; left: 24px; z-index: 20; display: grid; justify-items: start; pointer-events: none;
+    opacity: 0; transform: translateY(-6px); transition: opacity 600ms ease, transform 600ms cubic-bezier(.2,.9,.3,1);
+    text-shadow: 0 1px 14px rgba(5, 22, 54, 0.7);
+  }
+  .status.show { opacity: 1; transform: none; }
+  .status-main { display: flex; align-items: baseline; gap: 8px; white-space: nowrap; }
+  .status-main b { font-family: var(--font-head); font-weight: normal; font-size: 32px; line-height: 1; color: var(--foam); display: inline-block; }
+  .status-main span { font-weight: 700; font-size: 16px; color: var(--mist); }
+  .status-sub { margin-top: 8px; font-size: 13px; font-weight: 700; color: var(--cloud); }
+  .status-sub b { color: var(--foam); display: inline-block; }
+  .pop { animation: pop 520ms cubic-bezier(.2,.9,.3,1.4); }
+  @keyframes pop { 0% { transform: scale(1); } 35% { transform: scale(1.18); } 100% { transform: scale(1); } }
+  .hint { margin-top: 8px; font-size: 13px; font-weight: 600; color: var(--cloud); transition: opacity 900ms ease; }
+  .hint.gone { opacity: 0; }
+  .crumbs { margin-top: 16px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; pointer-events: auto; }
+  .crumbs:empty { display: none; }
+  .crumb {
+    font: 800 13px/1 var(--font-body); color: var(--foam); background: rgba(10, 35, 79, 0.62);
+    border: 1.5px solid rgba(158, 223, 255, 0.2); border-radius: 999px; padding: 8px 12px; cursor: pointer;
+    box-shadow: 0 3px 0 rgba(0, 0, 0, 0.3); text-shadow: none; transition: transform 120ms ease, background 150ms ease;
+  }
+  .crumb:hover { transform: translateY(1px); background: rgba(47, 154, 230, 0.3); }
+  .crumb:focus-visible { outline: 3px solid rgba(95, 198, 247, 0.5); outline-offset: 2px; }
+  .here { display: inline-flex; align-items: center; gap: 8px; font-weight: 800; font-size: 13px; color: var(--foam); }
+  .here i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .here span { color: var(--cloud); }
+
+  /* Hover tooltip */
+  .tip {
+    position: fixed; z-index: 25; pointer-events: none; max-width: 240px; left: 0; top: 0;
+    background: rgba(10, 35, 79, 0.97); color: var(--foam); border: 1px solid rgba(158, 223, 255, 0.24);
+    border-radius: 12px; padding: 8px 12px; font-size: 13px; font-weight: 700; line-height: 1.35;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3); opacity: 0; transition: opacity 90ms ease;
+  }
+  .tip.show { opacity: 1; }
+  .tip b { display: block; font-weight: 800; font-size: 13px; }
+  .tip .st { display: flex; align-items: center; gap: 8px; margin-top: 4px; font-weight: 700; font-size: 13px; }
+  .tip .st i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; }
+  .tip .act { display: block; margin-top: 4px; color: var(--sun); font-size: 13px; font-weight: 800; }
+
+  /* The one recommended next step. Anchored to its neuron by script; Dolphin's 3D press button. */
+  .next {
+    position: fixed; left: 0; top: 0; z-index: 22; height: 36px; padding: 0 14px 0 13px; border-radius: 999px;
+    display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; cursor: pointer;
+    font: 800 14px/1 var(--font-body); color: var(--ink);
+    background: var(--prog); border: 2px solid var(--prog-shadow);
+    box-shadow: 0 3px 0 var(--prog-shadow), 0 8px 22px rgba(2, 10, 30, 0.35);
+    opacity: 0; pointer-events: none; will-change: transform;
+    transition: opacity 260ms ease, box-shadow 120ms ease, filter 120ms ease, translate 120ms ease;
+  }
+  .next.ready { background: var(--ready); border-color: var(--ready-shadow); box-shadow: 0 3px 0 var(--ready-shadow), 0 8px 22px rgba(2, 10, 30, 0.35); }
+  .next.show { opacity: 1; pointer-events: auto; }
+  .next.hot { filter: brightness(1.06); box-shadow: 0 3px 0 var(--prog-shadow), 0 0 0 5px rgba(255, 159, 67, 0.24), 0 8px 22px rgba(2, 10, 30, 0.35); }
+  .next.ready.hot { box-shadow: 0 3px 0 var(--ready-shadow), 0 0 0 5px rgba(255, 244, 78, 0.22), 0 8px 22px rgba(2, 10, 30, 0.35); }
+  .next:active { translate: 0 3px; box-shadow: 0 0 0 transparent, 0 6px 18px rgba(2, 10, 30, 0.3); }
+  .next:focus-visible { outline: 3px solid rgba(255, 244, 78, 0.55); outline-offset: 3px; }
+  .next .k { opacity: 0.72; }
+  .next .lbl { max-width: min(260px, 52vw); overflow: hidden; text-overflow: ellipsis; }
+  .next .chev { font-size: 17px; margin-left: 1px; transform: translateY(-1px); }
+
+  @media (max-width: 700px) {
+    .status { top: 16px; left: 16px; right: 16px; }
+    .crumb { font-size: 12px; padding: 7px 10px; }
+    .next { height: 34px; font-size: 13px; padding: 0 12px 0 11px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .status, .tip, .hint, .next { transition: none; }
+    .pop { animation: none; }
+  }
+</style>
+</head>
+<body>
+<canvas id="view" role="img" aria-label="Your second brain in 3D: every SAT lesson is a neuron inside a brain region. Move the pointer to look around; point at a region to zoom in, and away to zoom out."></canvas>
+
+<header class="status" id="hud" aria-live="polite">
+  <div class="status-main"><b id="hudFiring">0</b><span>/ <span id="hudTotal">89</span> neurons firing</span></div>
+  <div class="status-sub">Projected <b id="hudScore">400</b></div>
+  <div class="hint" id="hint" hidden></div>
+  <nav class="crumbs" id="crumbs" aria-label="Brain path"></nav>
+</header>
+<button class="next" id="next" type="button"><span class="k">Next:</span><span class="lbl" id="nextLbl"></span><span class="chev" aria-hidden="true">›</span></button>
+<div class="tip" id="tip"></div>
+
+<script type="module">
+/*
+ * Sound design — Brain 3D (reuses the Second Brain palette: warm analog synth, synaptic clicks)
+ * Music: the shared procedural score in its calm register. A low pad and heartbeat while the scan runs,
+ *   a pulsing arpeggio as learned neurons switch on, the full swell at the moment the whole brain lights,
+ *   then a steady pulse. setIntensity follows how much of the brain is firing and whether you are inside
+ *   a region; finishing a lesson gives it a short lift.
+ * SFX (score.sfx), each fired on the frame its visual happens:
+ *   hover    – soft synaptic click (the pointer snaps to a neuron; a region's name appears as you lean in)
+ *   select   – glassy tap (lesson card opens)                                     [lesson-card.js]
+ *   back     – the same tap, lower (Esc, the back crumb, closing the card)
+ *   zoomIn   – airy upward whoosh (the camera commits into a region and turns to face it)
+ *   zoomOut  – the same whoosh falling (the camera pulls back to the whole brain)
+ *   start    – short charge-up (Start lesson)                                      [lesson-card.js]
+ *   complete – electric surge + bright chime (the neuron ignites green)            [lesson-card.js]
+ *   unlock   – gentle rising spark (a dormant neuron wakes up yellow)
+ *   riser    – ~2.2s sweep (every learned neuron is on; the frontier charges)
+ *   intro    – deep hit + crackle (the whole brain fully lights)
+ *   step     – tiny blip (a learned neuron switches on during the scan; a cascade pulse lands)
+ */
+import { createGraph, pct, clamp } from '../shared/graph.js';
+import { mountChrome, params } from '../shared/chrome.js';
+import { createLessonCard } from '../shared/lesson-card.js';
+
+// QA: ?debug=1 records frame stats and errors into the DOM.
+const dbgEl = params.has('debug') ? Object.assign(document.createElement('pre'), { id: 'dbg', hidden: true }) : null;
+if (dbgEl) { document.body.append(dbgEl); addEventListener('error', (e) => { dbgEl.textContent += `ERROR ${e.message} @${e.lineno}:${e.colno}\n`; }); }
+
+// ════════════════════════ Basics ════════════════════════
+const TAU = Math.PI * 2, DEG = Math.PI / 180;
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const noHover = matchMedia('(hover: none)').matches;
+const lerp = (a, b, t) => a + (b - a) * t;
+const smooth = (t) => t * t * (3 - 2 * t);
+const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+const easeOut = (t) => 1 - Math.pow(1 - t, 3);
+function mulberry32(a) {
+  return () => { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+}
+const rand = mulberry32(0xB3A1D3);   // layout (deterministic)
+const frand = Math.random;            // live simulation
+function hex(c) { const v = parseInt(c.slice(1), 16); return [(v >> 16) & 255, (v >> 8) & 255, v & 255]; }
+function mix(a, b, t) { const A = hex(a), B = hex(b); return '#' + A.map((v, i) => Math.round(v + (B[i] - v) * t).toString(16).padStart(2, '0')).join(''); }
+function rgba(c, a) { const [r, g, b] = hex(c); return `rgba(${r},${g},${b},${a})`; }
+function hash3(i, j, k) {
+  let h = (Math.imul(i, 374761393) + Math.imul(j, 668265263) + Math.imul(k, 1440662683)) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177); h ^= h >>> 16;
+  return (h >>> 0) / 4294967296;
+}
+function vnoise3(x, y, z) {
+  const i = Math.floor(x), j = Math.floor(y), k = Math.floor(z), fx = x - i, fy = y - j, fz = z - k;
+  const u = fx * fx * (3 - 2 * fx), v = fy * fy * (3 - 2 * fy), w = fz * fz * (3 - 2 * fz);
+  const a = lerp(lerp(hash3(i, j, k), hash3(i + 1, j, k), u), lerp(hash3(i, j + 1, k), hash3(i + 1, j + 1, k), u), v);
+  const b = lerp(lerp(hash3(i, j, k + 1), hash3(i + 1, j, k + 1), u), lerp(hash3(i, j + 1, k + 1), hash3(i + 1, j + 1, k + 1), u), v);
+  return lerp(a, b, w) * 2 - 1;
+}
+// Gyri: zero-contours of a domain-warped noise field on the cortex.
+function gyri(x, y, z) {
+  const S = 66, Q = S * 1.8;
+  const wx = vnoise3(x / Q + 11.3, y / Q + 3.1, z / Q + 7.4), wy = vnoise3(x / Q + 5.2, y / Q + 19.7, z / Q + 1.9), wz = vnoise3(x / Q + 23.1, y / Q + 8.8, z / Q + 14.2);
+  return vnoise3(x / S + 1.45 * wx, y / S + 1.45 * wy, z / S + 1.45 * wz) + 0.2 * vnoise3(x / (S * 0.45) + 40, y / (S * 0.45) + 9, z / (S * 0.45) + 3);
+}
+
+const C = {
+  foam: '#FFFFFC', mist: '#D9E4F2', cloud: '#B7C0CC', wave1: '#9EDFFF', wave2: '#5FC6F7', wave3: '#2F9AE6',
+  nightInk: '#0A234F', abyss: '#051636', sun: '#FFF44E', green: '#3FA669', orange: '#FF9F43',
+};
+const STATE = {
+  mastered: { col: C.green, text: '#8FE3AE', edge: '#A9E8C1' },
+  progress: { col: C.orange, text: '#FFC58C', edge: '#FFB36B' },
+  ready: { col: C.sun, text: C.sun, edge: '#FFF7A0' },
+  locked: { col: '#6F82A6', text: C.cloud, edge: C.cloud },
+};
+const HEAD = '"VAG Rundschrift D", "Manrope", system-ui, sans-serif';
+const BODY = '"Manrope", system-ui, sans-serif';
+const SHELL = mix(C.wave1, C.wave2, 0.3);
+const GLASS = '#A9BEDC';   // unfilled glass: a neutral steel blue, so every region colour reads against it
+
+// ════════════════════════ Brain model (world units; x: front → back, y: up, z: left → right) ════════════════════════
+// Each hemisphere is a union of four deformed ellipsoids, flattened on the medial side; the cerebellum is
+// two more, and the brain stem is a tapered column. Neurons live in the left hemisphere, which faces you.
+const HEMI = [
+  ['main', 30, 90, 118, 455, 235, 215, 0.52],
+  ['front', -250, 66, 114, 236, 206, 200, 0.55],
+  ['occ', 300, 66, 108, 212, 198, 182, 0.58],
+  ['temp', -50, -118, 152, 292, 124, 172, 0.42],
+];
+const ELL = [];
+for (const side of [-1, 1]) {
+  for (const [key, x, y, zm, ax, ay, az, med] of HEMI) ELL.push({ key, side, c: [x, y, side * zm], a: [ax, ay, az], med, cb: false });
+  ELL.push({ key: 'cb', side, c: [330, -222, side * 96], a: [160, 96, 142], med: 0.72, cb: true });
+}
+function ellF(E, x, y, z) {
+  const dx = (x - E.c[0]) / E.a[0], dy = (y - E.c[1]) / E.a[1], rz = z - E.c[2];
+  const dz = rz / (rz * E.side > 0 ? E.a[2] : E.a[2] * E.med);
+  return dx * dx + dy * dy + dz * dz;
+}
+function ellArea(E) { const a = E.a[0], b = E.a[1], c = E.a[2] * (1 + E.med) / 2, p = 1.6075; return 4 * Math.PI * Math.pow((Math.pow(a * b, p) + Math.pow(a * c, p) + Math.pow(b * c, p)) / 3, 1 / p); }
+function randDir() {
+  for (;;) { const x = rand() * 2 - 1, y = rand() * 2 - 1, z = rand() * 2 - 1, d = x * x + y * y + z * z; if (d > 0.01 && d <= 1) { const k = 1 / Math.sqrt(d); return [x * k, y * k, z * k]; } }
+}
+// Lobes, read off the lateral surface: central sulcus slants forward, the parieto-occipital line is near-vertical.
+function lobeOf(E, x, y) {
+  if (E.cb) return 3;
+  if (E.key === 'temp' && x < 250) return 4;
+  const xc = -70 + (clamp(y, -60, 330) + 10) * (110 / 340);
+  const xpo = 292 - (y - 80) * 0.12;
+  return x < xc ? 0 : x < xpo ? 1 : 2;
+}
+const BASE = { yaw: -14 * DEG, pitch: -13 * DEG };
+const ORBIT = { yaw: 35 * DEG, pitch: 20 * DEG };
+const REG_AMP = 0.4;
+function facingAt(yaw, pitch, nx, ny, nz) {
+  const z1 = -nx * Math.sin(yaw) + nz * Math.cos(yaw);
+  return -(ny * Math.sin(pitch) + z1 * Math.cos(pitch));
+}
+
+// Region palette: one saturated colour per SAT domain, kept clear of the lesson-state colours (mastered green
+// #3FA669, in progress orange #FF9F43, ready yellow #FFF44E) so a neuron always reads on top of its region.
+// Neighbouring lobes get contrasting hues; all sit in Dolphin's cool blue family plus one warm accent.
+//   Algebra                → frontal lobe    azure    #3E9BFF
+//   Advanced Math          → parietal lobe   violet   #A57BFF
+//   Problem Solving & Data → occipital lobe  aqua     #2ED3E6
+//   Geometry & Trig        → cerebellum      indigo   #6E79FF
+//   Reading & Writing      → temporal lobe   magenta  #F062BE
+const REGIONS = [
+  { key: 'frontal', domain: 'Algebra', lobe: 'Frontal lobe', pose: [-30, -10], zMax: 1.9, color: '#3E9BFF', out: [-1, 0.15, 0] , short: 'Algebra' },
+  { key: 'parietal', domain: 'Advanced Math', lobe: 'Parietal lobe', pose: [-6, -32], zMax: 1.9, color: '#A57BFF', out: [0, 1, 0] , short: 'Advanced Math' },
+  { key: 'occipital', domain: 'Problem Solving & Data', lobe: 'Occipital lobe', pose: [30, -10], zMax: 1.9, color: '#2ED3E6', out: [1, 0.25, 0] , short: 'Problem Solving' },
+  { key: 'cerebellum', domain: 'Geometry & Trig', lobe: 'Cerebellum', pose: [34, 16], zMax: 2.6, color: '#6E79FF', out: [0.7, -1, 0] , short: 'Geometry' },
+  { key: 'temporal', domain: 'Reading & Writing', lobe: 'Temporal lobe', pose: [-14, 10], zMax: 1.55, color: '#F062BE', out: [-0.25, -1, 0] , short: 'Reading' },
+];
+REGIONS.forEach((R, i) => { R.i = i; R.pose = [R.pose[0] * DEG, R.pose[1] * DEG]; });
+
+// A surface point on ellipsoid E from a unit direction, nudged along its normal so the shell is not perfectly smooth.
+function surfacePoint(E, ux, uy, uz) {
+  const az = uz * E.side > 0 ? E.a[2] : E.a[2] * E.med;
+  let x = E.c[0] + ux * E.a[0], y = E.c[1] + uy * E.a[1], z = E.c[2] + uz * az;
+  let nx = ux / E.a[0], ny = uy / E.a[1], nz = uz / az;
+  const nl = Math.hypot(nx, ny, nz); nx /= nl; ny /= nl; nz /= nl;
+  const bump = 9 * vnoise3(x / 240 + 3, y / 240 + 7, z / 240 + 1);
+  return [x + nx * bump, y + ny * bump, z + nz * bump, nx, ny, nz];
+}
+const insideOthers = (ei, x, y, z) => { for (let j = 0; j < ELL.length; j++) if (j !== ei && ellF(ELL[j], x, y, z) < 1) return true; return false; };
+// Fill points give the shell its body (and the soft haze); neuron candidates sit ~45 units under the cortex.
+const fillC = [];
+const nCand = REGIONS.map(() => []);
+{
+  const areas = ELL.map(ellArea), totalA = areas.reduce((a, b) => a + b, 0);
+  ELL.forEach((E, ei) => {
+    const n = Math.round(40000 * areas[ei] / totalA);
+    for (let k = 0; k < n; k++) {
+      const [ux, uy, uz] = randDir();
+      const sp = surfacePoint(E, ux, uy, uz);
+      const [x, y, z, nx, ny, nz] = sp;
+      if (insideOthers(ei, x, y, z)) continue;
+      const region = lobeOf(E, x, y);
+      const medial = !E.cb && nz * E.side < -0.5;
+      if (rand() < (medial ? 0.05 : 0.14)) fillC.push([x, y, z, nx, ny, nz, region, 1]);
+      if (E.side < 0 && facingAt(BASE.yaw, BASE.pitch, nx, ny, nz) > (E.cb ? -0.05 : 0.22) && rand() < 0.45) {
+        const d = 40 + rand() * 16;
+        nCand[region].push([x - nx * d, y - ny * d, z - nz * d]);
+      }
+    }
+  });
+}
+// Gyri: marching squares over each ellipsoid's (θ, φ) grid → contour segments in 3D, shared vertices.
+// The same pass traces the region borders: the central sulcus and parieto-occipital line (zero lines of
+// x − boundary(y)) and the creases where the temporal lobe and cerebellum meet the rest (zero line of the union).
+const GV = [];   // vertices: [x, y, z, nx, ny, nz]
+const GS = [];   // segments: [vi, vj, region, kind, base]  (kind 0 = gyrus, 2 = cerebellar folium, 3 = stem)
+const GB = [];   // region borders: [vi, vj]
+{
+  const CELL = 12.5;
+  ELL.forEach((E, ei) => {
+    const mr = (E.a[0] + E.a[1] + E.a[2] * (1 + E.med) / 2) / 3;
+    const nt = Math.max(16, Math.round((Math.PI * mr) / CELL)), nf = Math.max(32, Math.round((TAU * mr) / CELL));
+    const P = [], val = new Float32Array((nt + 1) * nf), ok = new Uint8Array((nt + 1) * nf);
+    for (let i = 0; i <= nt; i++) for (let j = 0; j < nf; j++) {
+      const th = (i / nt) * Math.PI, ph = (j / nf) * TAU;
+      const ux = Math.sin(th) * Math.cos(ph), uy = Math.cos(th), uz = Math.sin(th) * Math.sin(ph);
+      const sp = surfacePoint(E, ux, uy, uz), id = i * nf + j;
+      P[id] = sp;
+      ok[id] = !insideOthers(ei, sp[0], sp[1], sp[2]) && (E.cb || sp[5] * E.side > -0.45) ? 1 : 0;
+      val[id] = E.cb ? Math.sin(Math.asin(clamp(uy, -1, 1)) * 9.5 + 0.8 * vnoise3(sp[0] / 90, sp[1] / 90, sp[2] / 90)) : gyri(sp[0], sp[1], sp[2]);
+    }
+    function march(vals, cellOk, emit) {
+      const cache = new Map();
+      const vert = (a, b) => {
+        const key = a < b ? a * 1e6 + b : b * 1e6 + a;
+        let v = cache.get(key);
+        if (v !== undefined) return v;
+        const t = vals[a] / (vals[a] - vals[b]), A = P[a], B = P[b];
+        let nx = lerp(A[3], B[3], t), ny = lerp(A[4], B[4], t), nz = lerp(A[5], B[5], t);
+        const nl = Math.hypot(nx, ny, nz) || 1;
+        v = GV.length; GV.push([lerp(A[0], B[0], t), lerp(A[1], B[1], t), lerp(A[2], B[2], t), nx / nl, ny / nl, nz / nl]);
+        cache.set(key, v);
+        return v;
+      };
+      const seg = (a, b, c, d) => emit(vert(a, b), vert(c, d));
+      for (let i = 0; i < nt; i++) for (let j = 0; j < nf; j++) {
+        const j1 = (j + 1) % nf, tl = i * nf + j, tr = i * nf + j1, br = (i + 1) * nf + j1, bl = (i + 1) * nf + j;
+        if (!cellOk(tl, tr, br, bl)) continue;
+        const c = (vals[tl] > 0 ? 8 : 0) | (vals[tr] > 0 ? 4 : 0) | (vals[br] > 0 ? 2 : 0) | (vals[bl] > 0 ? 1 : 0);
+        if (c === 0 || c === 15) continue;
+        switch (c) {
+          case 1: case 14: seg(tl, bl, bl, br); break;
+          case 2: case 13: seg(bl, br, tr, br); break;
+          case 3: case 12: seg(tl, bl, tr, br); break;
+          case 4: case 11: seg(tl, tr, tr, br); break;
+          case 6: case 9: seg(tl, tr, bl, br); break;
+          case 7: case 8: seg(tl, bl, tl, tr); break;
+          case 5: seg(tl, bl, tl, tr); seg(bl, br, tr, br); break;
+          case 10: seg(tl, tr, tr, br); seg(tl, bl, bl, br); break;
+        }
+      }
+    }
+    const allOk = (a, b, c, d) => ok[a] && ok[b] && ok[c] && ok[d];
+    march(val, allOk, (va, vb) => {
+      const A = GV[va], B = GV[vb];
+      GS.push([va, vb, lobeOf(E, (A[0] + B[0]) / 2, (A[1] + B[1]) / 2), E.cb ? 2 : 0, E.cb ? 0.8 : 0.95]);
+    });
+    const bv = new Float32Array(P.length);
+    if (!E.cb && E.key !== 'temp') {
+      for (const fx of [(q) => q[0] - (-70 + (clamp(q[1], -60, 330) + 10) * (110 / 340)), (q) => q[0] - (292 - (q[1] - 80) * 0.12)]) {
+        P.forEach((q, id) => { bv[id] = fx(q); });
+        march(bv, allOk, (va, vb) => GB.push([va, vb]));
+      }
+    } else {
+      P.forEach((q, id) => { let m = Infinity; for (let j = 0; j < ELL.length; j++) if (j !== ei && !(E.cb && ELL[j].cb)) m = Math.min(m, ellF(ELL[j], q[0], q[1], q[2])); bv[id] = m - 1; });
+      const lateral = (id) => E.cb || P[id][5] * E.side > -0.45;
+      march(bv, (a, b, c, d) => lateral(a) && lateral(b) && lateral(c) && lateral(d), (va, vb) => GB.push([va, vb]));
+    }
+  });
+}
+// Brain stem: a few longitudinal lines on a tapered column, fading downward.
+for (let k = 0; k < 10; k++) {
+  const th = (k / 10) * TAU + 0.2;
+  let prev = -1;
+  for (let i = 0; i <= 14; i++) {
+    const t = i / 14, r = lerp(54, 38, t), x = lerp(150, 116, t) + Math.cos(th) * r, y = lerp(-150, -440, t), z = Math.sin(th) * r * 0.9;
+    let inside = false;
+    for (const E of ELL) if (ellF(E, x, y, z) < 1) { inside = true; break; }
+    if (inside) { prev = -1; continue; }
+    const v = GV.length; GV.push([x, y, z, Math.cos(th), 0, Math.sin(th)]);
+    if (prev >= 0) GS.push([prev, v, -1, 3, 0.75 * (1 - 0.85 * t)]);
+    prev = v;
+  }
+}
+const NGV = GV.length;
+const GVX = new Float32Array(NGV), GVY = new Float32Array(NGV), GVF = new Float32Array(NGV), GVZ = new Float32Array(NGV);
+const MAXP = 2600;
+const PX = new Float32Array(MAXP), PY = new Float32Array(MAXP), PZ = new Float32Array(MAXP);
+const NX = new Float32Array(MAXP), NY = new Float32Array(MAXP), NZ = new Float32Array(MAXP);
+const PRg = new Int8Array(MAXP), PK = new Uint8Array(MAXP), PB = new Float32Array(MAXP), PS = new Float32Array(MAXP);
+let NP = 0;
+{
+  const gkey = (ix, iy, iz) => ((ix + 512) * 1024 + (iy + 512)) * 1024 + (iz + 512);
+  function makeGrid(cell) { return { cell, m: new Map() }; }
+  function far(G, x, y, z, d) {
+    const c = G.cell, ix = Math.floor(x / c), iy = Math.floor(y / c), iz = Math.floor(z / c), r = Math.ceil(d / c), d2 = d * d;
+    for (let a = -r; a <= r; a++) for (let b = -r; b <= r; b++) for (let e = -r; e <= r; e++) {
+      const arr = G.m.get(gkey(ix + a, iy + b, iz + e));
+      if (arr) for (const p of arr) { const dx = p[0] - x, dy = p[1] - y, dz = p[2] - z; if (dx * dx + dy * dy + dz * dz < d2) return false; }
+    }
+    return true;
+  }
+  function put(G, p) { const c = G.cell, k = gkey(Math.floor(p[0] / c), Math.floor(p[1] / c), Math.floor(p[2] / c)); let a = G.m.get(k); if (!a) G.m.set(k, (a = [])); a.push(p); }
+  const coarse = makeGrid(20);
+  const add = (p, bright, size) => {
+    if (NP >= MAXP) return;
+    PX[NP] = p[0]; PY[NP] = p[1]; PZ[NP] = p[2]; NX[NP] = p[3]; NY[NP] = p[4]; NZ[NP] = p[5];
+    PRg[NP] = p[6]; PK[NP] = p[7]; PB[NP] = bright; PS[NP] = size; NP++;
+  };
+  for (const p of fillC) if (far(coarse, p[0], p[1], p[2], 20)) { put(coarse, p); add(p, 0.5, 0.95); }
+  // Brain stem: a tapered column under the cerebrum, fading downward.
+  for (let k = 0; k < 90 && NP < MAXP; k++) {
+    const t = rand(), th = rand() * TAU, r = lerp(54, 38, t);
+    const cx = lerp(150, 116, t), cy = lerp(-150, -440, t);
+    const p = [cx + Math.cos(th) * r, cy, Math.sin(th) * r * 0.9, Math.cos(th), 0, Math.sin(th), -1, 3];
+    let inside = false;
+    for (const E of ELL) if (ellF(E, p[0], p[1], p[2]) < 1) { inside = true; break; }
+    if (!inside) add(p, 0.55 * (1 - 0.75 * t), 1.05);
+  }
+}
+const SXa = new Float32Array(NP), SYa = new Float32Array(NP), SFa = new Float32Array(NP);
+// Volume samples: the "liquid". Points inside each region's volume (own RNG, so the neuron layout is unchanged).
+// Splatted below the level they read as a solid, thickness-weighted glow with a flat surface.
+const VX = [], VY = [], VZ = [], VR = [], VPH = [];
+{
+  const vr = mulberry32(0x5A17C0DE), cell = 46, grid = new Map();
+  const key = (x, y, z) => ((Math.floor(x / cell) + 64) * 128 + (Math.floor(y / cell) + 64)) * 128 + (Math.floor(z / cell) + 64);
+  for (let k = 0; k < 26000; k++) {
+    const x = -500 + vr() * 1020, y = -330 + vr() * 670, z = -340 + vr() * 680;
+    let E = null;
+    for (const e of ELL) if (ellF(e, x, y, z) < 0.9) { if (!E || e.cb || e.key === 'temp') E = e; }
+    if (!E) continue;
+    const region = E.cb ? 3 : E.key === 'temp' && y < -30 && x < 250 ? 4 : lobeOf(ELL.find((e) => e.key === 'main' && e.side === E.side), x, y);
+    let near = false;
+    const ix = Math.floor(x / cell), iy = Math.floor(y / cell), iz = Math.floor(z / cell);
+    for (let a = -1; a <= 1 && !near; a++) for (let b = -1; b <= 1 && !near; b++) for (let c = -1; c <= 1 && !near; c++) {
+      const arr = grid.get(((ix + a + 64) * 128 + (iy + b + 64)) * 128 + (iz + c + 64));
+      if (arr) for (const q of arr) if ((q[0] - x) ** 2 + (q[1] - y) ** 2 + (q[2] - z) ** 2 < cell * cell) { near = true; break; }
+    }
+    if (near) continue;
+    const kk = key(x, y, z); let arr = grid.get(kk); if (!arr) grid.set(kk, (arr = [])); arr.push([x, y, z]);
+    VX.push(x); VY.push(y); VZ.push(z); VR.push(region); VPH.push(vr() * TAU);
+  }
+}
+const NV = VX.length;
+const PH = new Float32Array(NP);
+for (let i = 0; i < NP; i++) PH[i] = hash3(i, 7, 3) * TAU;
+// Mastery as a rising liquid: each region fills from its lowest point up. The level for mastery m is the
+// m-quantile of the region's shell heights, so the filled share of the region is exactly its mastery.
+for (const R of REGIONS) {
+  const ys = [];
+  for (let i = 0; i < NP; i++) if (PRg[i] === R.i) ys.push(PY[i]);
+  for (const sg of GS) if (sg[2] === R.i) ys.push((GV[sg[0]][1] + GV[sg[1]][1]) / 2);
+  ys.sort((a, b) => a - b);
+  R.yq = Array.from({ length: 101 }, (_, k) => ys[Math.round((k / 100) * (ys.length - 1))]);
+  R.yMin = ys[0];
+  R.fillM = 0; R.fillAnim = null;
+}
+function levelFor(R, m) {
+  if (m <= 0.003) return -1e4;
+  if (m >= 0.995) return 1e4;
+  const f = m * 100, k = Math.floor(f);
+  return lerp(R.yq[k], R.yq[Math.min(100, k + 1)], f - k);
+}
+
+// ════════════════════════ Graph → regions, topics, neurons ════════════════════════
+const graph = createGraph();
+const root = graph.root;
+const NB = new Map();
+const lessons = [];
+const topics = [];
+const leafGroupsOf = (n) => (n.children.length && n.children.every((c) => !c.children.length) ? [n] : n.children.flatMap(leafGroupsOf));
+const d2 = (a, b) => (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2;
+const mean3 = (pts) => { const m = [0, 0, 0]; for (const p of pts) { m[0] += p[0]; m[1] += p[1]; m[2] += p[2]; } return m.map((v) => v / Math.max(1, pts.length)); };
+
+function kmeans3(points, k, iters = 24) {
+  const cents = [points[Math.floor(rand() * points.length)].slice()];
+  while (cents.length < k) {
+    let sum = 0;
+    const dd = points.map((p) => { let m = Infinity; for (const c of cents) m = Math.min(m, d2(p, c)); sum += m; return m; });
+    let r = rand() * sum, idx = 0;
+    for (; idx < points.length - 1; idx++) { r -= dd[idx]; if (r <= 0) break; }
+    cents.push(points[idx].slice());
+  }
+  const assign = new Int32Array(points.length);
+  for (let it = 0; it < iters; it++) {
+    const acc = cents.map(() => [0, 0, 0, 0]);
+    points.forEach((p, i) => {
+      let b = 0, bd = Infinity;
+      for (let c = 0; c < k; c++) { const d = d2(p, cents[c]); if (d < bd) { bd = d; b = c; } }
+      assign[i] = b; acc[b][0] += p[0]; acc[b][1] += p[1]; acc[b][2] += p[2]; acc[b][3]++;
+    });
+    acc.forEach((a, c) => { if (a[3]) cents[c] = [a[0] / a[3], a[1] / a[3], a[2] / a[3]]; });
+  }
+  return { cents, assign };
+}
+function principal(pts, c) {
+  let xx = 0, xy = 0, xz = 0, yy = 0, yz = 0, zz = 0;
+  for (const p of pts) { const dx = p[0] - c[0], dy = p[1] - c[1], dz = p[2] - c[2]; xx += dx * dx; xy += dx * dy; xz += dx * dz; yy += dy * dy; yz += dy * dz; zz += dz * dz; }
+  let v = [1, 0.35, 0.1];
+  for (let i = 0; i < 30; i++) { const n = [xx * v[0] + xy * v[1] + xz * v[2], xy * v[0] + yy * v[1] + yz * v[2], xz * v[0] + yz * v[1] + zz * v[2]]; const l = Math.hypot(...n) || 1; v = n.map((q) => q / l); }
+  return v;
+}
+function makeNeuron(l, R, G, p) {
+  const N = {
+    n: l, R, G, T: null, p, seed: rand(), adj: [],
+    sx: -1e4, sy: -1e4, zc: 1e4, f: 1, a: 0, rpx: 4, hl: 0, spike: 0, ignite: 0, wake: 0, ping: 0, charge: 0,
+    fromKey: null, fade: 0, hold: null, holdUntil: 0, on: true, onAt: 0, revealed: false,
+  };
+  NB.set(l.id, N); lessons.push(N);
+  return N;
+}
+for (const R of REGIONS) {
+  const dom = graph.domains.find((d) => d.label === R.domain);
+  R.dom = dom; dom.R = R;
+  R.hue = R.color; R.light = mix(R.hue, C.foam, 0.45);
+  const cand = nCand[R.i];
+  const groups = leafGroupsOf(dom);
+  const { cents, assign } = kmeans3(cand, groups.length);
+  const rc = mean3(cand);
+  // Visit cluster cells along a nearest-neighbour path so consecutive groups sit side by side.
+  const left = cents.map((_, i) => i);
+  let cur = left.reduce((b, i) => (d2(cents[i], rc) > d2(cents[b], rc) ? i : b), 0);
+  const order = [];
+  while (left.length) {
+    left.splice(left.indexOf(cur), 1); order.push(cur);
+    if (!left.length) break;
+    cur = left.reduce((b, i) => (d2(cents[i], cents[cur]) < d2(cents[b], cents[cur]) ? i : b), left[0]);
+  }
+  const used = new Uint8Array(cand.length), placedN = [];
+  let prevC = rc;
+  R.neurons = [];
+  groups.forEach((g, gi) => {
+    const ci = order[gi], c = cents[ci];
+    const cell = cand.filter((_, i) => assign[i] === ci);
+    let ax = principal(cell, c);
+    if ((prevC[0] - c[0]) * ax[0] + (prevC[1] - c[1]) * ax[1] + (prevC[2] - c[2]) * ax[2] > 0) ax = ax.map((v) => -v);
+    const n = g.children.length, sp = 40;
+    const G = { node: g, lessons: [] };
+    g.children.forEach((l, k) => {
+      const o = (k - (n - 1) / 2) * sp, want = [c[0] + ax[0] * o, c[1] + ax[1] * o, c[2] + ax[2] * o];
+      // Snap to the nearest free candidate that keeps breathing room, so every neuron sits under the cortex.
+      let best = -1, bd = Infinity, any = -1, ad = Infinity;
+      for (let i = 0; i < cand.length; i++) {
+        if (used[i]) continue;
+        const d = d2(cand[i], want);
+        if (d < ad) { ad = d; any = i; }
+        if (d >= bd) continue;
+        let ok = true;
+        for (const q of placedN) if (d2(cand[i], q.p) < (q.G === G ? 30 * 30 : 40 * 40)) { ok = false; break; }
+        if (ok) { bd = d; best = i; }
+      }
+      const pick = best >= 0 && bd < 120 * 120 ? best : any;
+      used[pick] = 1;
+      const N = makeNeuron(l, R, G, cand[pick].slice());
+      placedN.push(N); G.lessons.push(N); R.neurons.push(N);
+    });
+    g.G = G;
+    prevC = c;
+  });
+  for (const t of dom.children) {
+    const ls = leafGroupsOf(t).flatMap((g) => g.G.lessons);
+    const T = { node: t, R, lessons: ls, c: mean3(ls.map((N) => N.p)), la: 0, sx: 0, sy: 0 };
+    for (const N of ls) N.T = T;
+    t.T = T; topics.push(T);
+  }
+  R.c = mean3(R.neurons.map((N) => N.p));
+  // Hit-test samples: the subsurface layer of this lobe plus its neurons.
+  R.samples = cand.map((p) => ({ p, sx: 0, sy: 0 }));
+  Object.assign(R, { vis: 1, tVis: 1, tint: 0, tTint: 0, sx: 0, sy: 0, rS: 60, ext: null, seen: false });
+}
+
+// ════════════════════════ Synapses ════════════════════════
+const edges = [];
+const edgeKeys = new Set();
+function addEdge(a, b, kind) {
+  const key = [a.n.id, b.n.id].sort((x, y) => x - y).join('|');
+  if (a === b || edgeKeys.has(key)) return null;
+  edgeKeys.add(key);
+  const e = { a, b, kind, len: Math.sqrt(d2(a.p, b.p)), pts: null, sp: null };
+  edges.push(e); a.adj.push({ e, out: true }); b.adj.push({ e, out: false });
+  return e;
+}
+for (const R of REGIONS) {
+  const groups = leafGroupsOf(R.dom).map((g) => g.G);
+  groups.forEach((G, gi) => {
+    for (let k = 1; k < G.lessons.length; k++) addEdge(G.lessons[k - 1], G.lessons[k], 'ladder');
+    if (gi > 0) { const prev = groups[gi - 1].lessons; addEdge(prev[prev.length - 1], G.lessons[0], 'chain'); }
+  });
+}
+// Long tracts between regions (prerequisites that cross domains), arcing through the white matter.
+const byLabel = (s) => lessons.find((N) => N.n.label === s);
+[
+  ['Write y = mx + b', 'Exponential vs linear'], ['Rate of change', 'Unit rates'], ['Slope from two points', 'Line of best fit'],
+  ['Read the vertex', 'Circle equations'], ['Parallel & perpendicular', 'Parallel lines & transversals'],
+  ['Quantitative evidence', 'Scatterplots'], ['Words in context', 'Functions in context'], ['Proportions', 'Similar triangles'],
+].forEach(([a, b]) => {
+  const A = byLabel(a), B = byLabel(b);
+  if (!A || !B) return;
+  const e = addEdge(A, B, 'tract');
+  if (!e) return;
+  const m = mean3([A.p, B.p]), inner = [m[0] * 0.7, m[1] * 0.6 - 20, -70];
+  const c = [lerp(m[0], inner[0], 0.65), lerp(m[1], inner[1], 0.65), lerp(m[2], inner[2], 0.65)];
+  e.pts = [];
+  for (let i = 0; i <= 16; i++) {
+    const t = i / 16, u = 1 - t;
+    e.pts.push([u * u * A.p[0] + 2 * u * t * c[0] + t * t * B.p[0], u * u * A.p[1] + 2 * u * t * c[1] + t * t * B.p[1], u * u * A.p[2] + 2 * u * t * c[2] + t * t * B.p[2]]);
+  }
+  e.sp = new Float32Array(e.pts.length * 3);
+  let L = 0; for (let i = 1; i < e.pts.length; i++) L += Math.sqrt(d2(e.pts[i], e.pts[i - 1]));
+  e.len = L;
+});
+
+// ════════════════════════ States ════════════════════════
+function vkey(N) {
+  if (!N.on) return 'off';
+  const s = N.hold || N.n.state;
+  if (s === 'mastered') return 'mastered';
+  if (s === 'frontier') return N.n.progress > 0 ? 'progress' : 'ready';
+  return 'locked';
+}
+const isFrontierKey = (k) => k === 'progress' || k === 'ready';
+function edgeState(e) {
+  const a = vkey(e.a), b = vkey(e.b);
+  if (a === 'mastered' && b === 'mastered') return 'live';
+  if ((a === 'mastered' && isFrontierKey(b)) || (b === 'mastered' && isFrontierKey(a))) return 'charging';
+  return 'dormant';
+}
+// The one recommended next lesson: the furthest-along lesson in progress, else the first ready one.
+function pickNext() {
+  const prog = graph.frontierLessons().filter((l) => l.progress > 0).sort((a, b) => b.progress - a.progress);
+  return prog[0] || graph.journey().find((l) => l.state === 'frontier') || null;
+}
+
+// ════════════════════════ Canvas, viewport, camera ════════════════════════
+const cv = document.getElementById('view'), ctx = cv.getContext('2d');
+let W = 0, H = 0, DPR = 1;
+const safe = { list: [], at: 0 };
+function resize() {
+  W = innerWidth; H = innerHeight; DPR = Math.min(devicePixelRatio || 1, 2);
+  cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
+  safe.at = 0;
+}
+addEventListener('resize', resize);
+resize();
+let cardOpen = false;
+const narrow = () => W < 700;
+let focus = root;
+function viewport() {
+  const n = narrow();
+  const padX = n ? 12 : clamp(W * 0.04, 24, 64);
+  const padTop = n ? (focus === root ? 116 : 168) : focus === root ? 104 : 150;
+  const padBot = n ? (cardOpen ? 330 : 96) : 88;
+  const padRight = cardOpen && W >= 900 ? 400 : padX;
+  const v = { x: padX, y: padTop, w: Math.max(80, W - padX - padRight), h: Math.max(80, H - padTop - padBot) };
+  v.cx = v.x + v.w / 2; v.cy = v.y + v.h / 2;
+  return v;
+}
+let VP = viewport();
+
+// One projection: translate to the target, yaw about y, pitch about the camera's x, then perspective.
+const V = { cyw: 1, syw: 0, cp: 1, sp: 0, tx: 0, ty: 0, tz: 0, s: 1, D: 2600, ox: 0, oy: 0 };
+function setView(v, yaw, pitch, tx, ty, tz, s, D, ox, oy) {
+  v.cyw = Math.cos(yaw); v.syw = Math.sin(yaw); v.cp = Math.cos(pitch); v.sp = Math.sin(pitch);
+  v.tx = tx; v.ty = ty; v.tz = tz; v.s = s; v.D = D; v.ox = ox; v.oy = oy;
+}
+const PO = { x: 0, y: 0, z: 0, f: 1 };
+function project(v, x, y, z, out = PO) {
+  x -= v.tx; y -= v.ty; z -= v.tz;
+  const x1 = x * v.cyw + z * v.syw, z1 = -x * v.syw + z * v.cyw;
+  const y2 = y * v.cp - z1 * v.sp, zc = y * v.sp + z1 * v.cp + v.D, f = (v.s * v.D) / Math.max(60, zc);
+  out.x = v.ox + x1 * f; out.y = v.oy - y2 * f; out.z = zc; out.f = f;
+  return out;
+}
+const D_ROOT = 2600, D_REG = 1500;
+// Root target: the centre of the brain's bounding box, a little behind the cortex the neurons sit in.
+let ROOT_T;
+{
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  for (let i = 0; i < NP; i++) { x0 = Math.min(x0, PX[i]); x1 = Math.max(x1, PX[i]); y0 = Math.min(y0, PY[i]); y1 = Math.max(y1, PY[i]); }
+  ROOT_T = [(x0 + x1) / 2, (y0 + y1) / 2 + 30, -90];
+}
+// Fit extents at s = 1 (projection is linear in s), over every pose the orbit can reach, so nothing ever clips.
+function extents(pts, yaw, pitch, amp, t, D) {
+  const v = {}, o = {};
+  let mx = 1, my = 1;
+  for (const dy of [-1, 0, 1]) for (const dp of [-1, 0, 1]) {
+    setView(v, yaw + dy * ORBIT.yaw * amp, pitch + dp * ORBIT.pitch * amp, t[0], t[1], t[2], 1, D, 0, 0);
+    for (const p of pts) { project(v, p[0], p[1], p[2], o); mx = Math.max(mx, Math.abs(o.x)); my = Math.max(my, Math.abs(o.y)); }
+  }
+  return { mx, my };
+}
+const ROOT_EXT = (() => { const pts = []; for (let i = 0; i < NP; i += 2) pts.push([PX[i], PY[i], PZ[i]]); return extents(pts, BASE.yaw, BASE.pitch, reduceMotion ? 0.45 : 1, ROOT_T, D_ROOT); })();
+for (const R of REGIONS) R.ext = extents(R.neurons.map((N) => N.p), R.pose[0], R.pose[1], REG_AMP, R.c, D_REG);
+
+function frameFor(nav) {
+  if (nav === root) {
+    const s = Math.min((VP.w / 2) / ROOT_EXT.mx, (VP.h / 2) / ROOT_EXT.my);
+    return { yaw: BASE.yaw, pitch: BASE.pitch, tx: ROOT_T[0], ty: ROOT_T[1], tz: ROOT_T[2], s, D: D_ROOT, ox: VP.cx, oy: VP.cy };
+  }
+  const R = nav.R, n = narrow();
+  const padX = n ? 28 : 140, padY = n ? 36 : 56;
+  const s = Math.min(Math.max(30, VP.w / 2 - padX) / R.ext.mx, Math.max(30, VP.h / 2 - padY) / R.ext.my, R.zMax * (n ? 0.62 : 1));
+  return { yaw: R.pose[0], pitch: R.pose[1], tx: R.c[0], ty: R.c[1], tz: R.c[2], s, D: D_REG, ox: VP.cx, oy: VP.cy };
+}
+function blend(a, b, t) {
+  const o = {};
+  for (const k of ['yaw', 'pitch', 'tx', 'ty', 'tz', 'D', 'ox', 'oy']) o[k] = lerp(a[k], b[k], t);
+  o.s = a.s * Math.pow(b.s / a.s, t);
+  return o;
+}
+const CAMK = ['yaw', 'pitch', 'tx', 'ty', 'tz', 'ls', 'D', 'ox', 'oy'];
+const cam = { yaw: 0, pitch: 0, tx: 0, ty: 0, tz: 0, ls: 0, D: D_ROOT, ox: 0, oy: 0 };
+const camV = Object.fromEntries(CAMK.map((k) => [k, 0]));
+const orb = { yaw: 0, pitch: 0 }, orbV = { yaw: 0, pitch: 0 }, orbT = { yaw: 0, pitch: 0 };
+const drift = { w: 0, t: 0 };
+const CAM_W = reduceMotion ? 60 : 8.5;   // zoom moves: critically damped, ~0.55s
+const ORB_W = 15;                         // look-around: critically damped, ~0.3s
+function spring(obj, vel, keys, target, w, dt) {
+  const steps = Math.max(1, Math.ceil(dt * 240)), h = dt / steps;
+  for (const k of keys) {
+    let x = obj[k], v = vel[k];
+    const T = target[k];
+    for (let i = 0; i < steps; i++) { v += (w * w * (T - x) - 2 * w * v) * h; x += v * h; }
+    obj[k] = x; vel[k] = v;
+  }
+}
+function snapCamera() {
+  VP = viewport();
+  computeTargets(1);
+  for (const R of REGIONS) { R.vis = R.tVis; R.tint = R.tTint; R.fillM = fillTarget(R); R.fillAnim = null; }
+  const f = camTarget();
+  for (const k of CAMK) { cam[k] = k === 'ls' ? Math.log(f.s) : f[k]; camV[k] = 0; }
+  orb.yaw = orbT.yaw; orb.pitch = orbT.pitch; orbV.yaw = orbV.pitch = 0;
+}
+
+// ════════════════════════ Navigation (pointer proximity, lean → commit) ════════════════════════
+const DWELL = { in: 260, out: 200, side: 300 };
+const LEAN = { in: 0.36, out: 0.3, side: 0.3 };
+const SETTLE_MS = 420;
+const NAV = [root, ...graph.domains];
+for (const n of NAV) { n._prox = 0; n._tProx = 0; }
+let leanNode = null, leanType = null, hoverLeaf = null, forcedHover = null, selected = null;
+let pending = null, lockUntil = 0, clock = performance.now(), navOn = false, lastCardClose = 0;
+let nextN = null;
+const pointer = { x: -1, y: -1, in: false, real: false, parked: false, overUI: false, lastMoveAt: 0, travel: 0, speed: 0 };
+const nav = { rearmed: true, heard: null, sinceRest: 0, lastInside: null };
+const pill = { el: document.getElementById('next'), lbl: document.getElementById('nextLbl'), x: 0, y: 0, vx: 0, vy: 0, w: 0, h: 36, side: -1, shown: false, init: false, glideUntil: 0, rect: null, near: false, hot: false, lesson: null };
+
+function edgeP() {
+  const d = Math.min(pointer.x, W - pointer.x, pointer.y, H - pointer.y);
+  return 1 - clamp((d - 10) / 56, 0, 1);
+}
+// Which region is under a screen point: nearest projected subsurface sample (or neuron), scaled with zoom.
+function regionAt(px, py) {
+  const rad = Math.max(26, 58 * V.s);
+  let best = null, bd = rad * rad;
+  for (const R of REGIONS) {
+    if (R.vis < 0.2) continue;
+    for (const S of R.samples) { const d = (S.sx - px) ** 2 + (S.sy - py) ** 2; if (d < bd) { bd = d; best = R; } }
+    for (const N of R.neurons) { const d = (N.sx - px) ** 2 + (N.sy - py) ** 2; if (d < bd) { bd = d; best = R; } }
+  }
+  return best;
+}
+function distToRegion(R, px, py) {
+  let bd = Infinity;
+  for (const S of R.samples) bd = Math.min(bd, (S.sx - px) ** 2 + (S.sy - py) ** 2);
+  for (const N of R.neurons) bd = Math.min(bd, (N.sx - px) ** 2 + (N.sy - py) ** 2);
+  return Math.sqrt(bd);
+}
+function evalPointer() {
+  if (!pointer.in || !pointer.real || pointer.overUI || cardOpen) return null;
+  const px = pointer.x, py = pointer.y;
+  const here = regionAt(px, py);
+  let best = null;
+  const consider = (node, type, p, inside, prio) => {
+    const score = inside ? 10 + prio : p;
+    if (score > 0.002 && (!best || score > best.score)) best = { node, type, p, inside, score };
+  };
+  if (focus === root) {
+    if (here) {
+      const d = Math.hypot(px - here.sx, py - here.sy), core = here.rS * 0.5;
+      consider(here.dom, 'in', 0.3 + 0.7 * (1 - clamp((d - core) / (here.rS * 0.9), 0, 1)), d <= core, 0.5);
+    }
+    return best;
+  }
+  const F = focus.R, e = edgeP();
+  const dOut = here === F ? 0 : distToRegion(F, px, py);
+  const p = clamp((dOut - 30) / 110, 0, 1);
+  // The viewport edge always means "back out", even when a neighbouring lobe is under the pointer.
+  if (e > 0.45) consider(root, 'out', e, e >= 0.85, 0.3);
+  else if (here && here !== F) consider(here.dom, 'side', p, p >= 1, 0.2);
+  else if (!here) consider(root, 'out', p, p >= 1, 0.1);
+  return best;
+}
+function leafAt(px, py, keep) {
+  // Snap to the nearest neuron within ~28px. Zoomed out, only frontier neurons (the clickable ones) snap
+  // from that far; the rest need a near-direct hit, so sweeping across the brain stays calm.
+  const atRoot = focus === root;
+  let hit = null, bd = Infinity;
+  for (const N of lessons) {
+    if (!N.revealed || N.a < 0.3 || (!atRoot && N.R !== focus.R)) continue;
+    const k = vkey(N), big = N === nextN;
+    const r = !atRoot || isFrontierKey(k) ? Math.max(28, N.rpx + 8) : N.rpx + 5;
+    const d = Math.hypot(px - N.sx, py - N.sy) - (big ? 6 : 0);
+    if (d <= r && d < bd) { bd = d; hit = N; }
+  }
+  if (!hit && keep && keep.a > 0.3 && Math.hypot(px - keep.sx, py - keep.sy) <= Math.max(36, keep.rpx + 14)) hit = keep;
+  return hit;
+}
+function updateHover() {
+  const prev = hoverLeaf;
+  hoverLeaf = navOn && pointer.in && pointer.real && !pointer.overUI ? leafAt(pointer.x, pointer.y, prev) : null;
+  if (!hoverLeaf && forcedHover) hoverLeaf = forcedHover;
+  if (hoverLeaf && hoverLeaf !== prev && pointer.real) score.sfx('hover');
+  updateTip();
+}
+function setCursor() {
+  const clickable = hoverLeaf || (pointer.in && navOn && !cardOpen && focus === root && regionAt(pointer.x, pointer.y));
+  cv.style.cursor = clickable ? 'pointer' : 'default';
+}
+function handlePointer(now) {
+  updateHover();
+  if (!nav.rearmed && now > lockUntil && now - pointer.lastMoveAt > 220) { nav.rearmed = true; nav.sinceRest = 0; }
+  const hit = navOn ? evalPointer() : null;
+  leanNode = hit ? hit.node : null;
+  leanType = hit ? hit.type : null;
+  for (const n of NAV) n._tProx = 0;
+  if (leanNode) leanNode._tProx = hit.inside ? 1 : smooth(hit.p);
+  if (leanNode && leanType === 'in' && nav.heard !== leanNode) { nav.heard = leanNode; score.sfx('hover'); }
+  if (!leanNode) nav.heard = null;
+  // A click target under the pointer (a frontier neuron, the Next callout, or any neuron inside a region)
+  // pins the view: the camera never commits a move out from under a click.
+  const pinned = pill.near || (hoverLeaf && !forcedHover && (focus !== root || isFrontierKey(vkey(hoverLeaf))));
+  if (now - pointer.lastMoveAt > 40) pointer.speed *= 0.8;
+  // Dwell means settling inside the target: moving through a region (to look around) only leans, it never commits.
+  const sweeping = pointer.speed > 170;
+  // A dwell only starts when the pointer *arrives* in a target by moving there; resting inside one (after a
+  // zoom, or on load) and then leaving never commits.
+  const insideNode = hit && hit.inside ? hit.node : null;
+  if (insideNode && now >= lockUntil && !pinned) {
+    const arrived = insideNode !== nav.lastInside && now - pointer.lastMoveAt < 150 && pointer.travel >= 6;
+    if (arrived || (pending && pending.node === insideNode && sweeping)) pending = { node: insideNode, since: now };
+    const deliberate = hit.type === 'out' ? nav.rearmed && nav.sinceRest >= 24 : nav.rearmed || pointer.travel >= 160;
+    if (pending && pending.node === insideNode && deliberate && now - pending.since >= DWELL[hit.type]) setFocus(insideNode);
+  } else pending = null;
+  nav.lastInside = insideNode;
+  setCursor();
+}
+function setFocus(n, opts = {}) {
+  if (!n || n === focus || n.depth > 1) return;
+  const deeper = n.depth > focus.depth;
+  if (dbgEl) dbgEl.textContent += `FOCUS ${n.label} ptr=${Math.round(pointer.x)},${Math.round(pointer.y)} speed=${Math.round(pointer.speed)} travel=${Math.round(pointer.travel)}\n`;
+  focus = n;
+  lockUntil = clock + (reduceMotion ? 120 : SETTLE_MS);
+  pointer.travel = 0; pending = null; nav.rearmed = false; nav.heard = null; nav.lastInside = n === root ? null : root;
+  renderCrumbs();
+  if (!opts.quiet) score.sfx(opts.sound || (deeper ? 'zoomIn' : 'zoomOut'));
+  if (n !== root) { n.R.seen = true; dismissHint(); }
+  safe.at = 0;
+}
+
+function computeTargets(dt) {
+  const F = focus, p = leanNode ? leanNode._prox : 0;
+  for (const R of REGIONS) {
+    if (F === root) {
+      R.tVis = 1; R.tTint = 0;
+      if (leanNode && leanNode.depth === 1) { if (leanNode.R === R) R.tTint = p; else R.tVis = 1 - 0.28 * p; }
+    } else if (R === F.R) { R.tVis = 1; R.tTint = 1; }
+    else {
+      R.tVis = 0.24; R.tTint = 0;
+      if (leanType === 'side' && leanNode.R === R) { R.tVis += 0.5 * p; R.tTint = 0.6 * p; }
+      if (leanType === 'out') R.tVis += 0.5 * p;
+    }
+  }
+}
+function camTarget() {
+  let t = frameFor(focus);
+  if (leanNode && leanNode._prox > 0.001 && leanNode !== focus) t = blend(t, frameFor(leanNode), LEAN[leanType] * leanNode._prox);
+  t.yaw += intro.yawOff; t.pitch += intro.pitchOff; t.s *= intro.sMul;
+  return t;
+}
+let rootT = 1;
+// How full each region is: its mastery, built up neuron by neuron during the intro.
+function fillTarget(R) {
+  if (!intro.started) return 0;
+  if (introDone) return R.dom.m;
+  let sum = 0;
+  for (const N of R.neurons) if (N.on) sum += N.n.state === 'mastered' ? 1 : N.n.state === 'frontier' ? N.n.progress : 0;
+  return sum / R.neurons.length;
+}
+function animate(dt, now) {
+  const kV = 1 - Math.exp(-dt * (reduceMotion ? 30 : 9)), kP = 1 - Math.exp(-dt * 16);
+  for (const R of REGIONS) {
+    R.vis += (R.tVis - R.vis) * kV; R.tint += (R.tTint - R.tint) * kV;
+    if (R.fillAnim) { const k = clamp((now - R.fillAnim.t0) / R.fillAnim.dur, 0, 1); R.fillM = lerp(R.fillAnim.from, R.fillAnim.to, easeInOut(k)); if (k >= 1) R.fillAnim = null; }
+    else R.fillM += (fillTarget(R) - R.fillM) * (1 - Math.exp(-dt * (reduceMotion ? 40 : 3)));
+  }
+  for (const n of NAV) n._prox += (n._tProx - n._prox) * kP;
+  rootT += ((focus === root ? 1 : 0) - rootT) * kV;
+  for (const N of lessons) N.hl += ((N === hoverLeaf || N === selected ? 1 : 0) - N.hl) * kP;
+  const t = camTarget();
+  t.ls = Math.log(t.s);
+  spring(cam, camV, CAMK, t, CAM_W, dt);
+  // Look-around: the pointer's position maps straight to yaw/pitch; idle → a very slow drift.
+  const amp = (focus === root ? 1 : REG_AMP) * (reduceMotion ? 0.45 : 1);
+  const hold = pill.near || pointer.overUI;
+  if (navOn && pointer.real && pointer.in && !hold) {
+    orbT.yaw = clamp((pointer.x - W / 2) / (W / 2), -1, 1) * ORBIT.yaw * amp;
+    orbT.pitch = clamp((pointer.y - H / 2) / (H / 2), -1, 1) * ORBIT.pitch * amp;
+  }
+  const idle = !reduceMotion && !hold && !hoverLeaf && !pointer.parked && (!navOn ? !intro.started : !pointer.real || now - pointer.lastMoveAt > 3500);
+  drift.w += ((idle ? 1 : 0) - drift.w) * (1 - Math.exp(-dt * (idle ? 0.6 : 5)));
+  drift.t += dt * drift.w;
+  const dT = { yaw: orbT.yaw + Math.sin(drift.t * TAU / 28) * 12 * DEG * drift.w, pitch: orbT.pitch + Math.sin(drift.t * TAU / 41) * 4 * DEG * drift.w };
+  spring(orb, orbV, ['yaw', 'pitch'], dT, ORB_W, dt);
+  setView(V, cam.yaw + orb.yaw, cam.pitch + orb.pitch, cam.tx, cam.ty, cam.tz, Math.exp(cam.ls), cam.D, cam.ox, cam.oy);
+}
+
+// ════════════════════════ Neural simulation (ambient pulses + completion cascades) ════════════════════════
+const pulses = [];
+const K = { ambient: 0, cascade: 1 };
+let cascadeUntil = 0, fireRate = 0, fireCount = 0;
+function spawn(e, fwd, kind, hops = 0) {
+  if (pulses.length > 140) return;
+  const speed = (kind === K.cascade ? 300 : 170) * (reduceMotion ? 0.6 : 1);
+  pulses.push({ e, fwd, kind, hops, t: 0, sp: speed / Math.max(20, e.len) });
+}
+function wakeNeuron(N) {
+  if (!N.hold) return;
+  N.fromKey = 'locked'; N.fade = 1; N.hold = null; N.holdUntil = 0; N.wake = 1;
+  score.sfx('unlock');
+}
+function arrive(p, now) {
+  const N = p.fwd ? p.e.b : p.e.a;
+  N.spike = Math.min(1.4, N.spike + (p.kind === K.cascade ? 1 : 0.5));
+  fireCount++;
+  if (p.kind === K.cascade) {
+    score.sfx('step');
+    if (N.hold) wakeNeuron(N);
+    if (p.hops > 0) for (const { e, out } of N.adj) if (e !== p.e && edgeState(e) !== 'dormant') spawn(e, out, K.cascade, p.hops - 1);
+    return;
+  }
+  if (vkey(N) === 'mastered' && frand() < 0.3) {
+    const live = N.adj.filter((a) => a.e !== p.e && edgeState(a.e) === 'live');
+    if (live.length) { const a = live[Math.floor(frand() * live.length)]; spawn(a.e, a.out, K.ambient); }
+  }
+}
+let liveEdges = [];
+function refreshLive() { liveEdges = edges.filter((e) => edgeState(e) === 'live'); }
+function simulate(dt, now) {
+  const kS = Math.exp(-dt * 4);
+  for (const N of lessons) {
+    N.spike *= kS;
+    N.ignite = Math.max(0, N.ignite - dt * 0.75); N.wake = Math.max(0, N.wake - dt * 0.8);
+    N.ping = Math.max(0, N.ping - dt * 1.6); N.fade = Math.max(0, N.fade - dt * 2.2);
+    if (N.hold && N.holdUntil && now >= N.holdUntil) wakeNeuron(N);
+  }
+  // Ambient: a few soft pulses on learned synapses at any moment.
+  const rate = (intro.activity * (reduceMotion ? 1.5 : 5)) * (focus === root ? 1 : 0.7);
+  if (liveEdges.length && frand() < rate * dt) { const e = liveEdges[Math.floor(frand() * liveEdges.length)]; spawn(e, frand() < 0.5, K.ambient); }
+  for (let i = pulses.length - 1; i >= 0; i--) {
+    const p = pulses[i];
+    p.t += p.sp * dt;
+    if (p.t >= 1) { pulses[i] = pulses[pulses.length - 1]; pulses.pop(); arrive(p, now); }
+  }
+  fireRate += (fireCount / Math.max(dt, 1e-3) - fireRate) * (1 - Math.exp(-dt * 1.5));
+  fireCount = 0;
+}
+
+// ════════════════════════ Sprites ════════════════════════
+function sphereSprite(base, hi, lo) {
+  const c = document.createElement('canvas'); c.width = c.height = 96;
+  const g = c.getContext('2d');
+  const grd = g.createRadialGradient(37, 33, 2, 48, 48, 47);
+  grd.addColorStop(0, hi); grd.addColorStop(0.46, base); grd.addColorStop(1, lo);
+  g.fillStyle = grd; g.beginPath(); g.arc(48, 48, 46, 0, TAU); g.fill();
+  return c;
+}
+function glowSprite(color) {
+  const c = document.createElement('canvas'); c.width = c.height = 64;
+  const g = c.getContext('2d'), grd = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  grd.addColorStop(0, rgba(color, 0.9)); grd.addColorStop(0.3, rgba(color, 0.36)); grd.addColorStop(1, rgba(color, 0));
+  g.fillStyle = grd; g.fillRect(0, 0, 64, 64);
+  return c;
+}
+const SPR = {
+  mastered: sphereSprite('#3FA669', '#CFF8DE', '#1A5534'),
+  progress: sphereSprite('#FF9F43', '#FFE6C9', '#B0520A'),
+  ready: sphereSprite('#FFF44E', '#FFFFF2', '#C29E00'),
+  locked: sphereSprite('#3D5279', '#7C8FB2', '#1B2A47'),
+};
+SPR.off = SPR.locked;
+const GLOW = { progress: glowSprite(C.orange), ready: glowSprite(C.sun), mastered: glowSprite(C.green), foam: glowSprite(C.foam), pulse: glowSprite('#D8FFE6') };
+function glow(spr, x, y, rad, a) { if (a <= 0.004 || rad <= 0) return; ctx.globalAlpha = Math.min(1, a); ctx.drawImage(spr, x - rad, y - rad, rad * 2, rad * 2); }
+
+// ════════════════════════ Intro (scan → switch-on → light-up) ════════════════════════
+const intro = { started: false, t0: 0, offset: 0, t: 0, scanX: -1e4, lit: 0, activity: 0, wave: 0, ghost: 1, yawOff: 0, pitchOff: 0, sMul: 1, events: [] };
+let introDone = false;
+const RM = reduceMotion;
+const T = RM
+  ? { scan0: 0, scan1: 0.01, on0: 0.3, on1: 1.4, riser: 1.4, impact: 3.6, end: 3.9, turn: 0.01 }
+  : { scan0: 0.25, scan1: 2.7, on0: 1.2, on1: 4.0, riser: 4.0, impact: 6.2, end: 6.9, turn: 5.6 };
+const SCAN = [-560, 580];
+const INTRO_YAW = -44 * DEG, INTRO_PITCH = -24 * DEG, INTRO_S = 0.86;
+const journeyOn = graph.journey().filter((l) => l.state === 'mastered').map((l) => NB.get(l.id));
+journeyOn.forEach((N, i) => { const k = journeyOn.length > 1 ? i / (journeyOn.length - 1) : 1; N.onAt = T.on0 + (T.on1 - T.on0) * Math.pow(k, 0.8); });
+
+// ════════════════════════ Drawing ════════════════════════
+// Colour groups: 0–4 region glass, 5–9 region fill, 10–14 fill surface / colour wave, 15 neutral, 16 scan light.
+const LV = 8, G_FILL = 5, G_GLINT = 10, G_NEUTRAL = 15, G_FOAM = 16, GROUPS = 17;
+const groupCol = new Array(GROUPS).fill(SHELL);
+const RVIS = new Float32Array(5), LEVEL = new Float32Array(5), YMIN = new Float32Array(5), FLARE = new Float32Array(5);
+let RVIS_N = 1, WA = 0, WT = 0, SHIM = -1;
+const waveList = [];   // completion colour waves: { p, r, t0 }
+const WAVES = [];      // this frame's live waves: { x, y, z, r, rad, str }
+// Shared per-element shading. Glass: Fresnel rim (silhouettes glow, faces stay see-through), back faces dimmer,
+// depth fog. Below a region's liquid level the same element turns solid and luminous in the region colour,
+// with a gently moving surface and a soft band of light rising through it. Also the intro scan plane and
+// light-up wavefront, and completion colour waves. Returns alpha; sets SHADE_G (colour group).
+let SHADE_G = 0;
+function shade(fc, zc, wx, wy, wz, region, base) {
+  const rim = 1 - Math.abs(fc), fog = clamp(1.15 - (zc - V.D) / 820, 0.28, 1.25);
+  let a;
+  if (region < 0) { a = base * (fc >= 0 ? 0.42 + 0.58 * rim * rim : 0.07 + 0.4 * rim * rim) * fog * RVIS_N; SHADE_G = G_NEUTRAL; }
+  else {
+    const lev = LEVEL[region];
+    const wv = WA ? wy - WA * (Math.sin(wx * 0.012 + WT) + 0.7 * Math.sin(wz * 0.016 - WT * 0.8)) : wy;
+    if (wv < lev) {
+      a = base * (fc >= 0 ? 0.64 + 0.36 * rim : 0.18 + 0.32 * rim * rim) * fog * RVIS[region];
+      SHADE_G = G_FILL + region;
+      if (SHIM >= 0) { const u = (wy - YMIN[region]) / Math.max(30, lev - YMIN[region]), d = Math.abs(u - SHIM); if (d < 0.12) a *= 1 + 0.4 * (1 - d / 0.12); }
+      if (lev < 9e3 && lev - wv < 10) { SHADE_G = G_GLINT + region; a = Math.min(1, a * 1.2 + 0.12); }
+    } else {
+      a = base * (fc >= 0 ? 0.3 + 0.55 * rim * rim : 0.05 + 0.32 * rim * rim) * fog * RVIS[region];
+      SHADE_G = region;
+    }
+    for (const w of WAVES) {
+      if (w.r !== region) continue;
+      const dw = Math.abs(Math.hypot(wx - w.x, wy - w.y, wz - w.z) - w.rad);
+      if (dw < 60) { a = Math.min(1, a + (1 - dw / 60) * 1.1 * w.str); if (dw < 30) SHADE_G = G_GLINT + region; }
+    }
+  }
+  const sx = intro.scanX;
+  if (sx > -1e3 && sx < SCAN[1] + 100) {
+    const dx = sx - wx;
+    if (dx < 0) a *= 0.14;
+    else { a *= intro.ghost + (1 - intro.ghost) * intro.lit; if (dx < 70) { a = Math.min(1, a + (1 - dx / 70) * 0.9); if (dx < 30) SHADE_G = G_FOAM; } }
+  } else a *= intro.ghost + (1 - intro.ghost) * intro.lit;
+  if (intro.wave > 0) {
+    const dw = Math.abs(Math.hypot(wx + 40, wy - 30, wz + 120) - (80 + smooth(1 - intro.wave) * 760));
+    if (dw < 60) { a = Math.min(1, a + (1 - dw / 60) * 0.8 * intro.wave); if (dw < 24) SHADE_G = G_FOAM; }
+  }
+  return a;
+}
+const hazeCv = document.createElement('canvas'), hz = hazeCv.getContext('2d');
+const HAZE_SPR = glowSprite(C.wave3), HAZE_BAND = glowSprite(C.wave1);
+const FILL_SPR = REGIONS.map((R) => glowSprite(R.hue));
+const HAZE_K = 0.25;
+function prepShell(now) {
+  for (const R of REGIONS) {
+    const i = R.i, t = R.tint;
+    groupCol[i] = mix(GLASS, R.hue, 0.5 + 0.25 * t);            // glass: a clear tint of the region colour
+    groupCol[G_FILL + i] = mix(R.hue, C.foam, 0.16 + 0.14 * t);   // fill: the colour itself, luminous
+    groupCol[G_GLINT + i] = mix(R.hue, C.foam, 0.6);              // liquid surface and colour waves
+    RVIS[i] = (0.22 + 0.78 * R.vis) * (1 + 0.45 * t);
+    LEVEL[i] = levelFor(R, R.fillM); YMIN[i] = R.yMin;
+    FLARE[i] = R.fillAnim ? Math.sin(Math.PI * clamp((now - R.fillAnim.t0) / R.fillAnim.dur, 0, 1)) : 0;   // while the level rises
+  }
+  groupCol[G_NEUTRAL] = SHELL; groupCol[G_FOAM] = C.foam; RVIS_N = focus === root ? 1 : 0.4;
+  const s = now / 1000;
+  WA = reduceMotion ? 0 : 5; WT = s * 1.15;
+  SHIM = reduceMotion ? -1 : ((s * 0.19) % 1.5) - 0.15;
+  WAVES.length = 0;
+  for (let k = waveList.length - 1; k >= 0; k--) {
+    const w = waveList[k], age = (now - w.t0) / 1150;
+    if (age >= 1) { waveList.splice(k, 1); continue; }
+    if (age >= 0) WAVES.push({ x: w.p[0], y: w.p[1], z: w.p[2], r: w.r, rad: 20 + easeOut(age) * 540, str: 1 - age * age });
+  }
+}
+function drawShell(now) {
+  const v = V;
+  prepShell(now);
+  const sizeK = clamp(Math.sqrt(v.s), 0.62, 1.7) * (narrow() ? 1.1 : 1), tw = now / 1000 * 1.6;
+  // 1) Body points: project, splat the haze (glass blue where empty, the region colour where filled) into a
+  //    quarter-res layer, and sprinkle dots (every point where filled, with a slow twinkle; half of them elsewhere).
+  const hw = Math.ceil(W * HAZE_K), hh = Math.ceil(H * HAZE_K);
+  if (hazeCv.width !== hw || hazeCv.height !== hh) { hazeCv.width = hw; hazeCv.height = hh; }
+  hz.setTransform(1, 0, 0, 1, 0, 0); hz.clearRect(0, 0, hw, hh);
+  hz.globalCompositeOperation = 'lighter';
+  const hazeR = 34 * v.s * HAZE_K;
+  // 0) The liquid: volume samples below each region's level, soft and additive, gently shimmering.
+  const volR = 58 * v.s * HAZE_K, ts = now / 1000;
+  for (let i = 0; i < NV; i++) {
+    const r = VR[i], lev = LEVEL[r];
+    const wx = VX[i], wy = VY[i], wz = VZ[i];
+    // A completion's colour wave lights the region's volume as an expanding shell, above the level too.
+    let wave = 0;
+    for (const w of WAVES) if (w.r === r) { const dw = Math.abs(Math.hypot(wx - w.x, wy - w.y, wz - w.z) - w.rad); if (dw < 70) wave = Math.max(wave, (1 - dw / 70) * w.str); }
+    const wv = WA ? wy - WA * (Math.sin(wx * 0.012 + WT) + 0.7 * Math.sin(wz * 0.016 - WT * 0.8)) : wy;
+    const below = wv < lev;
+    if (!below && wave < 0.02) continue;
+    const x = wx - v.tx, y = wy - v.ty, z = wz - v.tz;
+    const x1 = x * v.cyw + z * v.syw, z1 = -x * v.syw + z * v.cyw;
+    const y2 = y * v.cp - z1 * v.sp, zc = y * v.sp + z1 * v.cp + v.D;
+    if (zc < 80) continue;
+    const f = (v.s * v.D) / zc, X = (v.ox + x1 * f) * HAZE_K, Y = (v.oy - y2 * f) * HAZE_K;
+    const fog = clamp(1.15 - (zc - v.D) / 820, 0.3, 1.2) * RVIS[r] * (intro.ghost + (1 - intro.ghost) * intro.lit);
+    let a = below ? 0.085 * fog * (1 + 0.35 * FLARE[r]) : 0;
+    if (below && lev < 9e3 && lev - wv < 18) a *= 1.9 + 1.6 * FLARE[r];         // the liquid's surface catches the light
+    a += 0.3 * wave * fog;
+    if (!reduceMotion) a *= 0.8 + 0.2 * Math.sin(ts * 0.9 + VPH[i]);            // slow caustic shimmer
+    if (SHIM >= 0) { const u = (wy - YMIN[r]) / Math.max(30, lev - YMIN[r]), d = Math.abs(u - SHIM); if (d < 0.14) a *= 1 + 0.5 * (1 - d / 0.14); }
+    const rr = volR * (f / v.s);
+    hz.globalAlpha = Math.min(1, a);
+    hz.drawImage(FILL_SPR[r], X - rr, Y - rr, rr * 2, rr * 2);
+  }
+  const dots = new Array(GROUPS * LV).fill(null);
+  for (let i = 0; i < NP; i++) {
+    const x = PX[i] - v.tx, y = PY[i] - v.ty, z = PZ[i] - v.tz;
+    const x1 = x * v.cyw + z * v.syw, z1 = -x * v.syw + z * v.cyw;
+    const y2 = y * v.cp - z1 * v.sp, zc = y * v.sp + z1 * v.cp + v.D;
+    if (zc < 80) { SXa[i] = -1e4; continue; }
+    const f = (v.s * v.D) / zc, X = v.ox + x1 * f, Y = v.oy - y2 * f;
+    SXa[i] = X; SYa[i] = Y;
+    if (X < -60 || Y < -60 || X > W + 60 || Y > H + 60) continue;
+    const nz1 = -NX[i] * v.syw + NZ[i] * v.cyw, fc = -(NY[i] * v.sp + nz1 * v.cp);
+    SFa[i] = fc;
+    let a = shade(fc, zc, PX[i], PY[i], PZ[i], PRg[i], PB[i]);
+    if (a < 0.02) continue;
+    const g = SHADE_G, filled = g >= G_FILL && g < G_NEUTRAL;
+    const hr = hazeR * (f / v.s);
+    if (filled) {
+      const fr = hr * 1.3;
+      hz.globalAlpha = Math.min(1, a * (g >= G_GLINT ? 0.5 : 0.22));
+      hz.drawImage(FILL_SPR[(g - G_FILL) % 5], X * HAZE_K - fr, Y * HAZE_K - fr, fr * 2, fr * 2);
+      if (!reduceMotion) a *= 0.72 + 0.28 * Math.sin(tw + PH[i]);
+    } else {
+      const rim = 1 - Math.abs(fc), band = g === G_FOAM;
+      hz.globalAlpha = Math.min(1, band ? a * 0.55 : a * (0.03 + 0.13 * rim * rim));
+      hz.drawImage(band ? HAZE_BAND : HAZE_SPR, X * HAZE_K - hr, Y * HAZE_K - hr, hr * 2, hr * 2);
+      if (i & 1) continue;
+    }
+    const lvl = Math.min(LV - 1, Math.floor(a * 0.85 * LV)), b = g * LV + lvl, rr = PS[i] * sizeK * (filled ? 0.95 : 0.85);
+    let P = dots[b];
+    if (!P) P = dots[b] = new Path2D();
+    P.moveTo(X + rr, Y); P.arc(X, Y, rr, 0, TAU);
+  }
+  ctx.globalAlpha = 1;
+  ctx.drawImage(hazeCv, 0, 0, W, H);
+  // 2) Gyri and region borders: project the contour vertices, then stroke segments bucketed by group and alpha.
+  for (let i = 0; i < NGV; i++) {
+    const p = GV[i], x = p[0] - v.tx, y = p[1] - v.ty, z = p[2] - v.tz;
+    const x1 = x * v.cyw + z * v.syw, z1 = -x * v.syw + z * v.cyw;
+    const y2 = y * v.cp - z1 * v.sp, zc = y * v.sp + z1 * v.cp + v.D;
+    const f = (v.s * v.D) / Math.max(80, zc);
+    GVX[i] = v.ox + x1 * f; GVY[i] = v.oy - y2 * f; GVZ[i] = zc;
+    const nz1 = -p[3] * v.syw + p[5] * v.cyw;
+    GVF[i] = -(p[4] * v.sp + nz1 * v.cp);
+  }
+  const off = (X0, Y0, X1, Y1) => (X0 < -20 && X1 < -20) || (Y0 < -20 && Y1 < -20) || (X0 > W + 20 && X1 > W + 20) || (Y0 > H + 20 && Y1 > H + 20);
+  const lines = new Array(GROUPS * LV).fill(null);
+  for (const sg of GS) {
+    const a0 = sg[0], b0 = sg[1];
+    const X0 = GVX[a0], Y0 = GVY[a0], X1 = GVX[b0], Y1 = GVY[b0];
+    if (off(X0, Y0, X1, Y1)) continue;
+    const A = GV[a0], B = GV[b0];
+    const a = shade((GVF[a0] + GVF[b0]) / 2, (GVZ[a0] + GVZ[b0]) / 2, (A[0] + B[0]) / 2, (A[1] + B[1]) / 2, (A[2] + B[2]) / 2, sg[2], sg[4]);
+    if (a < 0.025) continue;
+    const lvl = Math.min(LV - 1, Math.floor(a * LV)), b = SHADE_G * LV + lvl;
+    let P = lines[b];
+    if (!P) P = lines[b] = new Path2D();
+    P.moveTo(X0, Y0); P.lineTo(X1, Y1);
+  }
+  const borders = new Array(LV).fill(null);
+  for (const sg of GB) {
+    const a0 = sg[0], b0 = sg[1];
+    const X0 = GVX[a0], Y0 = GVY[a0], X1 = GVX[b0], Y1 = GVY[b0];
+    if (off(X0, Y0, X1, Y1)) continue;
+    const A = GV[a0], B = GV[b0];
+    const a = shade((GVF[a0] + GVF[b0]) / 2, (GVZ[a0] + GVZ[b0]) / 2, (A[0] + B[0]) / 2, (A[1] + B[1]) / 2, (A[2] + B[2]) / 2, -1, 1) / RVIS_N;
+    if (a < 0.04) continue;
+    const lvl = Math.min(LV - 1, Math.floor(a * LV));
+    let P = borders[lvl];
+    if (!P) P = borders[lvl] = new Path2D();
+    P.moveTo(X0, Y0); P.lineTo(X1, Y1);
+  }
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  const lw = clamp(0.8 * Math.sqrt(v.s), 0.7, 1.3);
+  const lineK = 0.72 * (0.5 + 0.5 * rootT);  // up close the folds step back; the neurons carry the view
+  for (let g = 0; g < GROUPS; g++) {
+    ctx.strokeStyle = groupCol[g]; ctx.fillStyle = groupCol[g];
+    const filled = g >= G_FILL && g < G_NEUTRAL;
+    ctx.lineWidth = filled ? lw * 1.25 : lw;
+    for (let l = 0; l < LV; l++) {
+      const al = (l + 0.6) / LV;
+      const P = lines[g * LV + l]; if (P) { ctx.globalAlpha = al * (filled ? 1 : lineK * 0.85); ctx.stroke(P); }
+      const D = dots[g * LV + l]; if (D) { ctx.globalAlpha = al; ctx.fill(D); }
+    }
+  }
+  // Region borders: one crisp, quiet line where lobes meet.
+  ctx.strokeStyle = C.foam; ctx.lineWidth = lw * 1.35;
+  for (let l = 0; l < LV; l++) { const P = borders[l]; if (P) { ctx.globalAlpha = ((l + 0.6) / LV) * 0.5 * (0.6 + 0.4 * rootT); ctx.stroke(P); } }
+  ctx.globalAlpha = 1;
+}
+
+const sorted = lessons.slice();
+const NR = 7.5;
+function projectAll() {
+  const v = V, o = PO;
+  const nk = narrow() ? lerp(1.12, 1.5, rootT) : 1;
+  for (const R of REGIONS) {
+    project(v, R.c[0], R.c[1], R.c[2], o); R.sx = o.x; R.sy = o.y;
+    const ds = [];
+    for (const S of R.samples) { project(v, S.p[0], S.p[1], S.p[2], o); S.sx = o.x; S.sy = o.y; ds.push(Math.hypot(o.x - R.sx, o.y - R.sy)); }
+    ds.sort((a, b) => a - b);
+    R.rS = Math.max(40, ds[Math.floor(ds.length * 0.85)] || 40);
+  }
+  for (const T of topics) { project(v, T.c[0], T.c[1], T.c[2], o); T.sx = o.x; T.sy = o.y; }
+  for (const N of lessons) {
+    project(v, N.p[0], N.p[1], N.p[2], o);
+    N.sx = o.x; N.sy = o.y; N.zc = o.z; N.f = o.f;
+    const k = vkey(N);
+    const sc = N === nextN && navOn && N.R.vis > 0.6 ? 1.55 : k === 'mastered' ? 0.9 : isFrontierKey(k) ? 1.02 : 0.72;
+    N.rpx = NR * nk * Math.pow(o.f, 0.65) * sc * (1 + 0.22 * N.hl + 0.12 * Math.min(1, N.spike));
+    let a = clamp(1.12 - (o.z - v.D) / 900, 0.4, 1) * Math.pow(N.R.vis, 1.6);
+    if (N === nextN && navOn && focus === root) a = Math.max(a, 0.92);   // the recommended neuron never dims at the overview
+    if (!N.revealed) a = 0;
+    N.a = a;
+  }
+  sorted.sort((a, b) => b.zc - a.zc);
+  // The recommended neuron always draws on top: it is the one thing you should be able to click.
+  if (nextN && navOn) { const i = sorted.indexOf(nextN); if (i >= 0) { sorted.splice(i, 1); sorted.push(nextN); } }
+}
+
+function drawEdges(now) {
+  ctx.lineCap = 'round';
+  const lw = clamp(Math.sqrt(V.s), 0.7, 1.6);
+  for (const e of edges) {
+    const A = e.a, B = e.b;
+    let a = Math.min(A.a, B.a);
+    if (a < 0.02) continue;
+    const st = edgeState(e);
+    ctx.beginPath();
+    if (e.pts) {
+      const o = PO;
+      e.pts.forEach((p, i) => { project(V, p[0], p[1], p[2], o); e.sp[i * 2] = o.x; e.sp[i * 2 + 1] = o.y; i ? ctx.lineTo(o.x, o.y) : ctx.moveTo(o.x, o.y); });
+      if (st === 'live') { ctx.globalAlpha = a * 0.16 * intro.lit; ctx.strokeStyle = C.wave1; ctx.lineWidth = lw; ctx.stroke(); }
+      else { ctx.setLineDash([2, 6]); ctx.globalAlpha = a * 0.12; ctx.strokeStyle = C.cloud; ctx.lineWidth = lw * 0.9; ctx.stroke(); ctx.setLineDash([]); }
+      continue;
+    }
+    ctx.moveTo(A.sx, A.sy); ctx.lineTo(B.sx, B.sy);
+    if (st !== 'dormant') { ctx.globalAlpha = a * 0.55; ctx.strokeStyle = '#061638'; ctx.lineWidth = lw * 1.3 + 2.2; ctx.stroke(); }
+    if (st === 'live') { ctx.globalAlpha = a * (0.22 + 0.2 * intro.lit); ctx.strokeStyle = STATE.mastered.edge; ctx.lineWidth = lw * 1.3; ctx.stroke(); }
+    else if (st === 'charging') {
+      const fk = isFrontierKey(vkey(A)) ? vkey(A) : vkey(B), fromA = vkey(A) === 'mastered';
+      ctx.setLineDash([3, 5]); ctx.lineDashOffset = reduceMotion ? 0 : (fromA ? -1 : 1) * now * 0.012;
+      ctx.globalAlpha = a * 0.5; ctx.strokeStyle = STATE[fk].edge; ctx.lineWidth = lw * 1.1; ctx.stroke();
+      ctx.setLineDash([]); ctx.lineDashOffset = 0;
+    } else { ctx.globalAlpha = a * 0.13; ctx.strokeStyle = C.cloud; ctx.lineWidth = lw; ctx.stroke(); }
+  }
+  ctx.globalAlpha = 1;
+}
+function pulsePos(p, out) {
+  const e = p.e, t = p.fwd ? p.t : 1 - p.t;
+  if (e.sp) {
+    const n = e.pts.length - 1, f = clamp(t, 0, 1) * n, i = Math.min(n - 1, Math.floor(f)), u = f - i;
+    out.x = lerp(e.sp[i * 2], e.sp[i * 2 + 2], u); out.y = lerp(e.sp[i * 2 + 1], e.sp[i * 2 + 3], u);
+  } else { out.x = lerp(e.a.sx, e.b.sx, t); out.y = lerp(e.a.sy, e.b.sy, t); }
+  return out;
+}
+function drawPulses() {
+  const q = { x: 0, y: 0 }, sz = clamp(Math.sqrt(V.s), 0.7, 1.6);
+  ctx.globalCompositeOperation = 'lighter';
+  for (const p of pulses) {
+    const a = Math.min(p.e.a.a, p.e.b.a) * (p.kind === K.cascade ? 1 : 0.6 * intro.lit);
+    if (a < 0.02) continue;
+    pulsePos(p, q);
+    glow(p.kind === K.cascade ? GLOW.foam : GLOW.pulse, q.x, q.y, (p.kind === K.cascade ? 9 : 5.5) * sz, a);
+  }
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = 1;
+}
+function ring(x, y, r, col, a, w) { if (a <= 0.01) return; ctx.globalAlpha = Math.min(1, a); ctx.strokeStyle = col; ctx.lineWidth = w; ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.stroke(); }
+function drawNeurons(now) {
+  const s = now / 1000;
+  for (const N of sorted) {
+    const a = N.a;
+    if (a < 0.02) continue;
+    const x = N.sx, y = N.sy, r = N.rpx, k = vkey(N), isNext = N === nextN && navOn && N.R.vis > 0.6;
+    if (x < -40 || y < -40 || x > W + 40 || y > H + 40) continue;
+    // Glow is reserved for what you can do next: the frontier, and above all the recommended lesson.
+    if (isFrontierKey(k)) {
+      const breathe = reduceMotion ? 0 : 0.05 * Math.sin(s * 2.1 + N.seed * 20);
+      ctx.globalCompositeOperation = 'lighter';
+      glow(GLOW[k], x, y, r * (isNext ? 3.6 : 2.5) * (1 + 1.4 * N.wake), a * ((isNext ? 0.58 : 0.26) + breathe + 0.5 * N.wake));
+      ctx.globalCompositeOperation = 'source-over';
+    } else if (k === 'off' && N.charge > 0.01 && isFrontierKey(N.n.progress > 0 ? 'progress' : 'ready')) {
+      ctx.globalCompositeOperation = 'lighter';
+      glow(GLOW[N.n.progress > 0 ? 'progress' : 'ready'], x, y, r * 2.6, a * N.charge * 0.5);
+      ctx.globalCompositeOperation = 'source-over';
+    }
+    if (N.spike > 0.04 && k === 'mastered') {
+      ctx.globalCompositeOperation = 'lighter';
+      glow(GLOW.mastered, x, y, r * 2.4, a * 0.5 * Math.min(1, N.spike));
+      ctx.globalCompositeOperation = 'source-over';
+    }
+    // Body: a shaded sphere; on a state change the old look cross-fades out.
+    const bodyA = a * (k === 'locked' ? 0.62 : k === 'off' ? 0.5 : 1);
+    // A thin dark halo keeps every neuron legible on top of the luminous region fill.
+    ctx.globalAlpha = Math.min(1, bodyA * bodyA * 0.9); ctx.fillStyle = '#061638';   // fades faster than the body: never muddy
+    ctx.beginPath(); ctx.arc(x, y, r * 1.2 + 0.6, 0, TAU); ctx.fill();
+    if (N.fade > 0 && N.fromKey) { ctx.globalAlpha = a * N.fade; ctx.drawImage(SPR[N.fromKey], x - r, y - r, r * 2, r * 2); }
+    ctx.globalAlpha = bodyA * (N.fromKey ? 1 - N.fade * 0.6 : 1);
+    ctx.drawImage(SPR[k], x - r, y - r, r * 2, r * 2);
+    // In progress: a thin progress ring once zoomed in enough to read it.
+    if (k === 'progress' && r > 9) {
+      const rr = r * 1.5, lw = Math.max(1.6, r * 0.13);
+      ring(x, y, rr, rgba(C.orange, 0.3), a, lw);
+      ctx.globalAlpha = a; ctx.strokeStyle = C.orange; ctx.lineWidth = lw; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.arc(x, y, rr, -Math.PI / 2, -Math.PI / 2 + TAU * N.n.progress); ctx.stroke();
+    }
+    if (isNext) {
+      const col = STATE[k === 'ready' ? 'ready' : 'progress'].col;
+      ring(x, y, r * 1.45, col, a * 0.9, 2);
+      if (!reduceMotion) { const ph = (s / 2.4) % 1, e = easeOut(ph); ring(x, y, r * (1.5 + 1.7 * e), col, a * 0.6 * Math.pow(1 - ph, 1.6), 2); }
+    }
+    if (N.ping > 0) ring(x, y, r * (1.2 + 1.6 * smooth(1 - N.ping)), STATE[k === 'off' ? 'locked' : k].text, N.ping * 0.7 * a, 1.5);
+    if (N.wake > 0) ring(x, y, r * (1.4 + 3.2 * smooth(1 - N.wake)), C.sun, N.wake * a, 2 * N.wake + 0.5);
+    if (N.ignite > 0) {
+      ctx.globalCompositeOperation = 'lighter';
+      glow(GLOW.foam, x, y, (r + 26) * (1 + 2.2 * smooth(1 - N.ignite)), N.ignite * 0.8);
+      ctx.globalCompositeOperation = 'source-over';
+      ring(x, y, r * (1.6 + 6 * smooth(1 - N.ignite)), '#8FE3AE', N.ignite * 0.9, 2.5 * N.ignite + 0.5);
+    }
+    if (N.hl > 0.02) ring(x, y, r * 1.5 + 3, C.foam, N.hl * 0.9 * a, 1.5);
+  }
+  ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
+}
+
+// ── Screen-space labels ──
+function wrap(text, maxW, maxLines = 2) {
+  const words = text.split(' '), lines = [];
+  let line = '';
+  for (const w of words) { const t = line ? line + ' ' + w : w; if (ctx.measureText(t).width <= maxW || !line) line = t; else { lines.push(line); line = w; } }
+  if (line) lines.push(line);
+  if (lines.length > maxLines) { lines.length = maxLines; lines[maxLines - 1] += '…'; }
+  return lines;
+}
+function halo(text, x, y, fill, w = 4) {
+  ctx.lineWidth = w; ctx.lineJoin = 'round'; ctx.strokeStyle = 'rgba(5,22,54,0.85)'; ctx.strokeText(text, x, y);
+  ctx.fillStyle = fill; ctx.fillText(text, x, y);
+}
+const placed = [];
+const hits = (b, list = placed) => b[0] < 8 || b[2] > W - 8 || b[1] < 8 || b[3] > H - 8 || list.some((p) => b[0] < p[2] && b[2] > p[0] && b[1] < p[3] && b[3] > p[1]);
+function screenBox(ns) {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const N of ns) { x0 = Math.min(x0, N.sx - N.rpx); y0 = Math.min(y0, N.sy - N.rpx); x1 = Math.max(x1, N.sx + N.rpx); y1 = Math.max(y1, N.sy + N.rpx); }
+  return [x0, y0, x1, y1];
+}
+// Region names: always on at the overview, small and calm, just outside each region's edge.
+const regLab = REGIONS.map(() => ({ k: -1 }));
+const BC = { x: 0, y: 0, z: 0, f: 1 };
+function drawRegionLabel(R, x, y, a, f) {
+  const cy = y + f.bh / 2;
+  ctx.globalAlpha = a; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = 'rgba(5,22,54,0.85)'; ctx.beginPath(); ctx.arc(x + 5, cy, 6, 0, TAU); ctx.fill();
+  ctx.fillStyle = R.hue; ctx.beginPath(); ctx.arc(x + 5, cy, 4.5, 0, TAU); ctx.fill();
+  ctx.font = `${f.fs}px ${HEAD}`; halo(f.name, x + 15, cy + 1, C.foam, 3);
+  ctx.font = `800 ${f.ps}px ${BODY}`; halo(f.p, x + 15 + f.nw + 7, cy + 1, R.light, 3);
+}
+const PHONE_ORDER = ['frontal', 'parietal', 'temporal', 'occipital', 'cerebellum'];
+function drawRegionLabels() {
+  const a0 = rootT * intro.regionLabels;
+  if (a0 < 0.02) return;
+  const n = narrow(), fs = n ? 13 : 15, ps = n ? 12 : 13, bh = fs + 6;
+  const lp = leanNode && leanNode.depth === 1 && focus === root ? leanNode._prox : 0;
+  const alphaOf = (R) => a0 * (lp && leanNode.R === R ? 1 : 0.9 - 0.3 * lp);
+  const metrics = (R) => {
+    const name = n ? R.short : R.dom.label, p = pct(R.fillM);
+    ctx.font = `${fs}px ${HEAD}`; const nw = ctx.measureText(name).width;
+    ctx.font = `800 ${ps}px ${BODY}`; const pw = ctx.measureText(p).width;
+    return { name, p, nw, pw, fs, ps, bh, bw: 15 + nw + 7 + pw };
+  };
+  if (n) {
+    // Phone: the brain spans the width, so short names sit in two tidy, centred rows just under it.
+    let bottom = -Infinity;
+    for (const Q of REGIONS) for (const S of Q.samples) bottom = Math.max(bottom, S.sy);
+    let y = bottom + 50 * V.s + 16;
+    // Flow the names into centred rows that fit the screen.
+    const rows = [[]];
+    let used = 0;
+    for (const k of PHONE_ORDER) {
+      const R = REGIONS.find((Q) => Q.key === k), f = metrics(R), add = (rows[rows.length - 1].length ? 16 : 0) + f.bw;
+      if (used + add > W - 24 && rows[rows.length - 1].length) { rows.push([]); used = 0; }
+      rows[rows.length - 1].push([R, f]); used += rows[rows.length - 1].length > 1 ? 16 + f.bw : f.bw;
+    }
+    for (const items of rows) {
+      const total = items.reduce((t, [, f]) => t + f.bw, 0) + 16 * (items.length - 1);
+      let x = Math.max(12, W / 2 - total / 2);
+      for (const [R, f] of items) {
+        const box = [x - 4, y - 3, x + f.bw + 4, y + bh + 3];
+        if (!hits(box)) { placed.push(box); drawRegionLabel(R, x, y, alphaOf(R), f); }
+        x += f.bw + 16;
+      }
+      y += bh + 8;
+    }
+    ctx.globalAlpha = 1;
+    return;
+  }
+  for (const R of REGIONS) {
+    const f = metrics(R), bw = f.bw;
+    // Each label sits off its region's natural outer edge (frontal → front, parietal → top, …), in 3D.
+    project(V, R.c[0] + R.out[0] * 120, R.c[1] + R.out[1] * 120, R.c[2] + R.out[2] * 120, BC);
+    let dx = BC.x - R.sx, dy = BC.y - R.sy;
+    const dl = Math.hypot(dx, dy) || 1; dx /= dl; dy /= dl;
+    let ext = 0;
+    for (const S of R.samples) ext = Math.max(ext, (S.sx - R.sx) * dx + (S.sy - R.sy) * dy);
+    const m = ext + 50 * V.s + 10, ax = R.sx + dx * m, ay = R.sy + dy * m;
+    const side = Math.abs(dx) > Math.abs(dy) * 1.1;
+    const bx = side ? (dx > 0 ? ax : ax - bw) : ax - bw / 2, by = side ? ay - bh / 2 : dy < 0 ? ay - bh : ay;
+    const cands = [0, 26, -26, 52, -52].map((o) => [bx - dy * o, by + dx * o]);
+    cands.push([R.sx - bw / 2, R.sy - bh / 2]);
+    const tryAt = (k) => {
+      const x = clamp(cands[k][0], 12, W - 12 - bw), y = clamp(cands[k][1], 12, H - 12 - bh), box = [x - 4, y - 3, x + bw + 4, y + bh + 3];
+      return hits(box) ? null : [x, y, box];
+    };
+    const L = regLab[R.i];
+    // Keep the last outside spot while it still fits (no jumping labels); the inside fallback is never sticky.
+    let k = L.k, got = k >= 0 && k < cands.length - 1 ? tryAt(k) : null;
+    if (!got) for (k = 0; k < cands.length; k++) if ((got = tryAt(k))) break;
+    if (!got) { L.k = -1; continue; }
+    L.k = k;
+    placed.push(got[2]);
+    drawRegionLabel(R, got[0], got[1], alphaOf(R), f);
+  }
+  ctx.globalAlpha = 1;
+}
+let activeTopic = null;
+function pickActiveTopic() {
+  if (focus === root) { activeTopic = null; return; }
+  const F = focus.R;
+  const ts = topics.filter((T) => T.R === F);
+  if (hoverLeaf && hoverLeaf.R === F) { activeTopic = hoverLeaf.T; return; }
+  if (!pointer.real || !pointer.in) { activeTopic = activeTopic && activeTopic.R === F ? activeTopic : (nextN && nextN.R === F ? nextN.T : ts[0]); return; }
+  let best = null, bd = Infinity;
+  for (const T of ts) { const d = Math.hypot(pointer.x - T.sx, pointer.y - T.sy); if (d < bd) { bd = d; best = T; } }
+  if (activeTopic && activeTopic.R === F && activeTopic !== best) {
+    const dc = Math.hypot(pointer.x - activeTopic.sx, pointer.y - activeTopic.sy);
+    if (bd > dc * 0.8) best = activeTopic;
+  }
+  activeTopic = bd < 260 || (activeTopic && activeTopic.R === F) ? best : null;
+}
+function drawTopicLabels(dt) {
+  const kA = 1 - Math.exp(-dt * 10);
+  for (const T of topics) T.la += ((focus !== root && T.R === focus.R ? 1 : 0) - T.la) * kA;
+  ctx.font = `800 13px ${BODY}`; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  // Neurons of the region in view are obstacles too: a label never sits on a neuron.
+  const nObst = focus === root ? [] : focus.R.neurons.filter((N) => N.a > 0.3).map((N) => { const r = N.rpx + 3; return [N.sx - r, N.sy - r, N.sx + r, N.sy + r]; });
+  placed.push(...nObst);
+  for (const T of topics) {
+    const a = T.la * T.R.vis * intro.labels * (1 - rootT * 0.8);
+    if (a < 0.03) continue;
+    const w = ctx.measureText(T.node.label).width, bb = screenBox(T.lessons), x = (bb[0] + bb[2]) / 2;
+    let box = null;
+    for (const y of [bb[1] - 26, bb[3] + 10]) { const b = [x - w / 2 - 4, y - 2, x + w / 2 + 4, y + 18]; if (!hits(b)) { box = b; break; } }
+    if (!box) continue;
+    placed.push(box);
+    ctx.globalAlpha = a * (T === activeTopic ? 1 : 0.78);
+    halo(T.node.label, x, box[1] + 2, T === activeTopic ? C.foam : C.mist);
+  }
+  for (const b of nObst) placed.splice(placed.indexOf(b), 1);
+  ctx.globalAlpha = 1;
+}
+const fmtDate = (d) => (d ? d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '');
+function lessonLine(N) {
+  const k = vkey(N), l = N.n;
+  if (k === 'mastered') return { text: `Mastered ${fmtDate(l.masteredAt)}`, col: STATE.mastered.text };
+  if (k === 'progress') return { text: `In progress · ${pct(l.progress)}`, col: STATE.progress.text };
+  if (k === 'ready') return { text: 'Ready to learn', col: STATE.ready.text };
+  return { text: graph.blockerText(l), col: C.cloud };
+}
+function drawLessonLabels() {
+  const T = activeTopic;
+  if (!T || focus === root) return;
+  const la = T.la * intro.labels;
+  if (la < 0.05) return;
+  const obst = T.lessons.map((N) => { const r = N.rpx * 1.6 + 2; return [N.sx - r, N.sy - r, N.sx + r, N.sy + r]; });
+  placed.push(...obst);
+  ctx.font = `700 13px ${BODY}`;
+  T.lessons.forEach((N, k) => {
+    if (N === hoverLeaf || (N === nextN && pill.shown) || N.a < 0.3) return;
+    const mine = placed.splice(placed.indexOf(obst[k]), 1)[0];
+    const lines = wrap(N.n.label, 150);
+    const bw = Math.max(...lines.map((l) => ctx.measureText(l).width)), bh = lines.length * 16;
+    const gap = N.rpx * 1.6 + 8, pref = N.sx >= T.sx ? 1 : -1;
+    const cands = [
+      [pref, pref > 0 ? N.sx + gap : N.sx - gap - bw, N.sy - bh / 2],
+      [-pref, -pref > 0 ? N.sx + gap : N.sx - gap - bw, N.sy - bh / 2],
+      [0, N.sx - bw / 2, N.sy + gap - 4],
+      [0, N.sx - bw / 2, N.sy - gap - bh + 4],
+    ];
+    let pick = null;
+    for (const [side, x0, y0] of cands) { const b = [x0 - 3, y0 - 2, x0 + bw + 3, y0 + bh + 2]; if (!hits(b)) { pick = [side, b]; break; } }
+    placed.push(mine);
+    if (!pick) return;
+    const [side, box] = pick;
+    placed.push(box);
+    const k2 = vkey(N);
+    ctx.textAlign = side > 0 ? 'left' : side < 0 ? 'right' : 'center'; ctx.textBaseline = 'top';
+    const tx = side > 0 ? box[0] + 3 : side < 0 ? box[2] - 3 : N.sx;
+    ctx.globalAlpha = la * (k2 === 'locked' ? 0.62 : 1);
+    lines.forEach((l, i) => halo(l, tx, box[1] + 2 + i * 16, k2 === 'mastered' ? C.foam : STATE[k2 === 'off' ? 'locked' : k2].text));
+  });
+  ctx.globalAlpha = 1;
+}
+function drawLeanPill() {
+  if (!leanNode || leanType !== 'out' || leanNode._prox < 0.15 || !pointer.in) return;
+  const text = '‹ Whole brain';
+  ctx.font = `800 13px ${BODY}`;
+  const w = ctx.measureText(text).width + 32, h = 32;
+  const x = clamp(pointer.x - w / 2, 8, W - w - 8);
+  let y = pointer.y + 24;
+  if (y + h > H - 8 || safe.list.some((r) => x < r[2] && x + w > r[0] && y < r[3] && y + h > r[1])) y = pointer.y - 24 - h;
+  y = clamp(y, 8, H - h - 8);
+  ctx.globalAlpha = clamp((leanNode._prox - 0.15) / 0.5, 0, 1);
+  ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.beginPath(); ctx.roundRect(x, y + 3, w, h, 16); ctx.fill();
+  ctx.fillStyle = C.nightInk; ctx.beginPath(); ctx.roundRect(x, y, w, h, 16); ctx.fill();
+  ctx.strokeStyle = rgba(C.wave1, 0.35); ctx.lineWidth = 1.5; ctx.stroke();
+  ctx.fillStyle = C.foam; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(text, x + w / 2, y + h / 2 + 0.5);
+  ctx.globalAlpha = 1;
+}
+// Screen areas owned by UI (dock, music button, status, open lesson card, caption): labels and the callout stay clear.
+function safeRects(now) {
+  if (now - safe.at > 150) {
+    safe.at = now;
+    safe.list = ['.kg-dock', '.kg-sound', '#hud', '.kg-card.open', '.kg-caption.show'].map((q) => document.querySelector(q)?.getBoundingClientRect())
+      .filter((r) => r && r.width).map((r) => [r.left - 8, r.top - 8, r.right + 8, r.bottom + 8]);
+  }
+  return safe.list;
+}
+
+// ── The Next callout: one pill, anchored to its neuron, kept on screen and clear of UI ──
+const PILL_DIRS = Array.from({ length: 16 }, (_, i) => [Math.cos((i / 8) * TAU), Math.sin((i / 8) * TAU)]);
+function setNext(l, glide) {
+  const N = l ? NB.get(l.id) : null;
+  if (N === nextN) return;
+  nextN = N;
+  if (!N) return;
+  const k = vkey(N);
+  pill.lbl.textContent = l.label;
+  pill.el.classList.toggle('ready', k === 'ready');
+  pill.el.setAttribute('aria-label', `Next lesson: ${l.label}`);
+  pill.w = pill.el.offsetWidth; pill.h = pill.el.offsetHeight;
+  pill.side = -1;
+  if (glide && pill.init) pill.glideUntil = performance.now() + 900;
+}
+function placePill(now, dt, obstacles) {
+  const N = nextN;
+  const want = N && navOn && N.a > 0.45 && N.R.vis > 0.6 && !(cardOpen && card.lesson === N.n) && N.sx > 0 && N.sx < W && N.sy > 0 && N.sy < H;
+  if (want !== pill.shown) { pill.shown = want; pill.el.classList.toggle('show', want); if (!want) { pill.near = false; pill.hot = false; } }
+  if (!want) { pill.rect = null; return null; }
+  pill.el.classList.toggle('ready', vkey(N) === 'ready');
+  const w = pill.w || pill.el.offsetWidth, h = pill.h || 36, r = N.rpx, gap = r * 1.5 + 22;
+  // Prefer the side facing away from the brain's centre, keep the current side while it still fits,
+  // and avoid sitting on other frontier neurons.
+  const ox = N.sx - V.ox, oy = N.sy - V.oy, ol = Math.hypot(ox, oy) || 1;
+  const obst = obstacles || safeRects(now);
+  let best = null;
+  PILL_DIRS.forEach(([dx, dy], i) => {
+    const far = i >= 8, gg = far ? gap + 46 : gap;
+    const ax = N.sx + dx * gg, ay = N.sy + dy * gg * 0.8;
+    const x = ax - w / 2 + dx * w / 2, y = ay - h / 2 + dy * h / 2;
+    const b = [x, y, x + w, y + h];
+    let cost = -(dx * ox + dy * oy) / ol;
+    if (b[0] < 12 || b[1] < 12 || b[2] > W - 12 || b[3] > H - 12) cost += 100;
+    if (obst.some((q) => b[0] < q[2] && b[2] > q[0] && b[1] < q[3] && b[3] > q[1])) cost += 50;
+    for (const M of lessons) {
+      if (M === N || M.a < 0.3) continue;
+      if (M.sx > b[0] - 6 && M.sx < b[2] + 6 && M.sy > b[1] - 6 && M.sy < b[3] + 6) cost += isFrontierKey(vkey(M)) ? 1 : 0.45;
+    }
+    if (far) cost += 0.35;
+    if (i === pill.side) cost -= 0.6;
+    if (!best || cost < best.cost) best = { cost, x, y, i };
+  });
+  if (!pill.near || pill.side < 0) pill.side = best.i;   // while the pointer closes in, the callout keeps its side
+  else best = { x: N.sx + PILL_DIRS[pill.side][0] * (pill.side >= 8 ? gap + 46 : gap) - w / 2 + PILL_DIRS[pill.side][0] * w / 2, y: N.sy + PILL_DIRS[pill.side][1] * (pill.side >= 8 ? gap + 46 : gap) * 0.8 - h / 2 + PILL_DIRS[pill.side][1] * h / 2 };
+  const tx = clamp(best.x, 12, W - 12 - w), ty = clamp(best.y, 12, H - 12 - h);
+  if (!pill.init || reduceMotion) { pill.x = tx; pill.y = ty; pill.vx = pill.vy = 0; pill.init = true; }
+  else {
+    const wv = now < pill.glideUntil ? 6.5 : 22, steps = Math.max(1, Math.ceil(dt * 240)), hh = dt / steps;
+    for (let i = 0; i < steps; i++) {
+      pill.vx += (wv * wv * (tx - pill.x) - 2 * wv * pill.vx) * hh; pill.x += pill.vx * hh;
+      pill.vy += (wv * wv * (ty - pill.y) - 2 * wv * pill.vy) * hh; pill.y += pill.vy * hh;
+    }
+  }
+  pill.el.style.transform = `translate3d(${pill.x.toFixed(1)}px, ${pill.y.toFixed(1)}px, 0)`;
+  pill.rect = [pill.x - 6, pill.y - 6, pill.x + w + 6, pill.y + h + 6];
+  // Leader: neuron edge → nearest point on the pill.
+  const px = clamp(N.sx, pill.x, pill.x + w), py = clamp(N.sy, pill.y, pill.y + h);
+  const dx = px - N.sx, dy = py - N.sy, dl = Math.hypot(dx, dy);
+  if (dl > r * 1.6 + 4) {
+    const col = STATE[vkey(N) === 'ready' ? 'ready' : 'progress'].col, s0 = (r * 1.45 + 2) / dl;
+    ctx.globalAlpha = 0.7 * N.a; ctx.strokeStyle = col; ctx.lineWidth = 1.5; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(N.sx + dx * s0, N.sy + dy * s0); ctx.lineTo(px, py); ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+  // Near the callout, the view holds still so the button never slides away from the pointer.
+  const m = pill.near ? 90 : 64;   // hysteresis: once held, the pointer can wander a little further
+  pill.near = pointer.real && pointer.in && pointer.x > pill.rect[0] - m && pointer.x < pill.rect[2] + m && pointer.y > pill.rect[1] - m && pointer.y < pill.rect[3] + m;
+  const hot = hoverLeaf === N || (pill.near && pointer.x > pill.rect[0] && pointer.x < pill.rect[2] && pointer.y > pill.rect[1] && pointer.y < pill.rect[3]) || pill.forceHot;
+  if (hot !== pill.hot) { pill.hot = hot; pill.el.classList.toggle('hot', hot); }
+  return pill.rect;
+}
+
+let stateVersion = 0;
+const perf = { n: 0, sum: 0, max: 0 };
+function draw(now, dt) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, cv.width, cv.height);
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  drawShell(now);
+  projectAll();
+  if (intro.started) { drawEdges(now); drawPulses(); drawNeurons(now); }
+  placed.length = 0;
+  placed.push(...safeRects(now));
+  // On a phone the space around the small brain is scarce: region names claim it first and the callout
+  // routes around them. On wider screens the callout comes first and the names make room.
+  const phone = narrow();
+  if (phone && intro.regionLabels > 0.01 && !cardOpen) drawRegionLabels();
+  const pr = placePill(now, dt, phone ? placed.slice() : null);
+  if (pr) placed.push(pr);
+  // The tooltip owns its patch of screen: canvas labels underneath it are skipped, never half-covered.
+  if (tipNode && tip.classList.contains('show')) { const r = tip.getBoundingClientRect(); placed.push([r.left - 4, r.top - 4, r.right + 4, r.bottom + 4]); }
+  if (!phone && intro.regionLabels > 0.01) drawRegionLabels();
+  if (intro.labels > 0.01) { pickActiveTopic(); drawTopicLabels(dt); drawLessonLabels(); }
+  drawLeanPill();
+  ctx.globalAlpha = 1;
+}
+
+// ════════════════════════ HUD, crumbs, tooltip ════════════════════════
+const hudEl = document.getElementById('hud'), hintEl = document.getElementById('hint');
+const $f = document.getElementById('hudFiring'), $s = document.getElementById('hudScore');
+document.getElementById('hudTotal').textContent = graph.stats().total;
+const hint = { shownAt: 0, gone: false };
+function showHint() {
+  hintEl.textContent = noHover ? 'Tap a region to zoom in.' : 'Move your mouse to look around. Point at a region to zoom in.';
+  hintEl.hidden = false; hint.shownAt = performance.now(); setTimeout(dismissHint, 4500);
+}
+function dismissHint() { if (hint.gone || !hint.shownAt) return; hint.gone = true; hintEl.classList.add('gone'); setTimeout(() => { hintEl.hidden = true; }, 950); }
+const hud = { firing: 0, score: 400, tFiring: 0, tScore: 400, stepAt: 0 };
+function popEl(el) { el.classList.remove('pop'); void el.offsetWidth; el.classList.add('pop'); }
+function renderHud() { $f.textContent = hud.firing; $s.textContent = hud.score; }
+function setHudTargets(s = graph.stats(), instant = false) {
+  hud.tFiring = s.mastered; hud.tScore = s.score;
+  if (instant) { hud.firing = s.mastered; hud.score = s.score; renderHud(); }
+}
+function hudUpdate(now) {
+  if (!introDone) return;
+  if (now < hud.stepAt) return;
+  let changed = false;
+  if (hud.firing !== hud.tFiring) { hud.firing += Math.sign(hud.tFiring - hud.firing); popEl($f); changed = true; }
+  if (hud.score !== hud.tScore) { hud.score += Math.sign(hud.tScore - hud.score) * 10; if (hud.score === hud.tScore) popEl($s); changed = true; }
+  if (changed) { renderHud(); hud.stepAt = now + 70; }
+}
+const crumbsEl = document.getElementById('crumbs');
+function renderCrumbs() {
+  crumbsEl.replaceChildren();
+  if (focus === root) return;
+  const b = document.createElement('button');
+  b.className = 'crumb'; b.type = 'button';
+  b.textContent = narrow() ? '‹ Brain' : '‹ Whole brain';
+  let timer = 0; // hovering the crumb also navigates, like the canvas does
+  b.addEventListener('mouseenter', () => { timer = setTimeout(() => setFocus(root, { sound: 'back' }), 260); });
+  b.addEventListener('mouseleave', () => clearTimeout(timer));
+  b.addEventListener('click', () => { clearTimeout(timer); setFocus(root, { sound: 'back' }); });
+  const here = document.createElement('span');
+  here.className = 'here';
+  const dot = document.createElement('i'); dot.style.background = focus.R.hue;
+  const pc = document.createElement('span'); pc.textContent = pct(focus.m);
+  here.append(dot, focus.label, pc);
+  crumbsEl.append(b, here);
+}
+const tip = document.getElementById('tip');
+let tipNode = null;
+function updateTip() {
+  // The recommended neuron already has its callout; it gets no second label at the zoomed-out view.
+  const want = hoverLeaf && !(hoverLeaf === nextN && pill.shown && focus === root) ? hoverLeaf : null;
+  if (want !== tipNode) {
+    tipNode = want;
+    if (tipNode) {
+      const l = tipNode.n, k = vkey(tipNode), line = lessonLine(tipNode);
+      tip.replaceChildren();
+      const b = document.createElement('b'); b.textContent = l.label;
+      const st = document.createElement('span'); st.className = 'st'; st.style.color = line.col;
+      const dot = document.createElement('i'); dot.style.background = line.col; st.append(dot, line.text);
+      tip.append(b, st);
+      if (isFrontierKey(k)) { const act = document.createElement('span'); act.className = 'act'; act.textContent = noHover ? 'Tap to start' : k === 'progress' ? 'Click to continue' : 'Click to start'; tip.append(act); }
+    }
+    tip.classList.toggle('show', !!tipNode);
+  }
+  if (tipNode) {
+    const ax = pointer.in && pointer.real ? pointer.x : tipNode.sx, ay = pointer.in && pointer.real ? pointer.y : tipNode.sy;
+    const tw = tip.offsetWidth, th = tip.offsetHeight, g = 16;
+    const obst = pill.rect ? [...safeRects(performance.now()), pill.rect] : safeRects(performance.now());
+    const bad = (x, y) => x < 8 || y < 8 || x + tw > W - 8 || y + th > H - 8 || obst.some((r) => x < r[2] && x + tw > r[0] && y < r[3] && y + th > r[1]);
+    const opts = [[ax + g, ay + g], [ax - g - tw, ay + g], [ax + g, ay - g - th], [ax - g - tw, ay - g - th]];
+    const [x, y] = opts.find(([x0, y0]) => !bad(x0, y0)) || [clamp(ax + g, 8, W - tw - 8), clamp(ay + g, 8, H - th - 8)];
+    tip.style.left = x + 'px'; tip.style.top = y + 'px';
+  }
+}
+
+// ════════════════════════ Chrome, card, completion ════════════════════════
+const { score, caption } = mountChrome({
+  id: 'brain-3d',
+  eyebrow: 'Second brain · 3D',
+  title: 'Your SAT brain, in 3D.',
+  tagline: 'Every lesson you have learned, wired into a brain you can look around.',
+  gateBackground: 'radial-gradient(ellipse at 50% 45%, rgba(10,43,100,0.45) 0%, rgba(10,43,100,0.7) 45%, rgba(5,22,54,0.95) 100%)',
+  dark: true,
+  beginLabel: 'Scan my brain',
+  onBegin: () => startIntro(),
+});
+// QA: with ?debug=1 every semantic sound event is logged with its timestamp (window.__sfxLog).
+if (dbgEl) { const play = score.sfx; window.__sfxLog = []; score.sfx = (name, o) => { window.__sfxLog.push([Math.round(performance.now()), name]); return play(name, o); }; }
+const card = createLessonCard(graph, {
+  score, caption,
+  onOpen: (n) => { cardOpen = true; selected = NB.get(n.id); safe.at = 0; pending = null; },
+  onClose: () => { cardOpen = false; selected = null; lastCardClose = performance.now(); safe.at = 0; score.sfx('back'); },
+  onComplete: (evt) => onComplete(evt),
+});
+pill.el.addEventListener('click', () => { if (nextN) card.open(nextN.n); });
+pill.el.addEventListener('pointerenter', () => { if (pill.shown) score.sfx('hover'); });
+
+let nextTimer = 0, boost = 0;
+function onComplete(evt) {
+  const now = performance.now();
+  const N = NB.get(evt.lesson.id);
+  stateVersion++;
+  N.fromKey = evt.lesson.progress > 0 && N === nextN ? 'progress' : 'ready'; N.fade = 1;
+  N.ignite = 1; N.spike = 1.4; N.wake = 0;
+  // The region fills up to its new level, led by a short wave of its colour from the neuron outward.
+  waveList.push({ p: N.p, r: N.R.i, t0: now + 60 });
+  N.R.fillAnim = { from: N.R.fillM, to: N.R.dom.m, t0: now + 280, dur: reduceMotion ? 1 : 1500 };
+  cascadeUntil = now + 2200;
+  for (const l of evt.unlocked) { const U = NB.get(l.id); U.hold = 'locked'; U.holdUntil = now + 1500 + frand() * 300; }
+  for (const { e, out } of N.adj) spawn(e, out, K.cascade, 2);
+  refreshLive();
+  setHudTargets(evt.stats);
+  boost = 0.3; score.setIntensity(0.9, 0.6);
+  // The callout waits for the ignite, then glides to the next recommendation.
+  clearTimeout(nextTimer);
+  nextTimer = setTimeout(() => setNext(pickNext(), true), reduceMotion ? 300 : 1300);
+  if (focus !== root) renderCrumbs();
+}
+
+// ════════════════════════ Intro timeline ════════════════════════
+Object.assign(intro, { labels: 0, regionLabels: 0 });
+function introEvents() {
+  return [
+    { t: 0, run: () => score.setIntensity(0.12, 0.6) },
+    { t: T.on0, run: () => { hudEl.classList.add('show'); score.setIntensity(0.5, T.on1 - T.on0); }, settle: () => hudEl.classList.add('show') },
+    { t: T.riser, run: () => { score.sfx('riser'); score.setIntensity(0.68, T.impact - T.riser); } },
+    { t: T.impact, run: impactNow, settle: () => { for (const N of lessons) N.on = true; refreshLive(); } },
+    { t: T.end, run: finishIntro, settle: finishIntro },
+  ];
+}
+function impactNow() {
+  const now = performance.now();
+  score.sfx('intro');
+  intro.wave = reduceMotion ? 0 : 1;
+  for (const N of lessons) {
+    if (!N.on) { N.on = true; if (isFrontierKey(vkey(N))) { N.wake = 0.9; N.fromKey = 'off'; N.fade = 1; } }
+    if (vkey(N) === 'mastered') N.spike = 0.6 + frand() * 0.6;
+  }
+  refreshLive();
+  for (let i = 0; i < 24 && liveEdges.length; i++) { const e = liveEdges[Math.floor(frand() * liveEdges.length)]; spawn(e, frand() < 0.5, K.ambient); }
+  caption('This is your second brain.', 3600);
+  score.setIntensity(0.85, 0.4);
+  boost = 0.25;
+}
+function finishIntro() {
+  if (introDone) return;
+  introDone = true; navOn = true;
+  for (const N of lessons) { N.revealed = true; N.on = true; }
+  refreshLive();
+  setHudTargets(undefined, intro.offset >= T.end);
+  if (intro.offset >= T.end) for (const R of REGIONS) R.fillM = R.dom.m;
+  hudEl.classList.add('show');
+  setNext(pickNext(), false);
+  if (!params.get('demo')) showHint();
+}
+function startIntro() {
+  intro.started = true; intro.t0 = performance.now();
+  intro.events = introEvents();
+  const off = intro.offset;
+  for (const N of lessons) N.on = N.n.state === 'locked';
+  if (off > 0) for (const ev of intro.events) if (ev.t < off) { ev.fired = true; ev.settle?.(); }
+}
+function introUpdate(now, dt) {
+  if (!intro.started) {
+    intro.ghost = 0.32; intro.lit = 0; intro.activity = 0; intro.labels = 0; intro.regionLabels = 0; intro.scanX = -1e4;
+    intro.yawOff = reduceMotion ? 0 : INTRO_YAW; intro.pitchOff = reduceMotion ? 0 : INTRO_PITCH; intro.sMul = reduceMotion ? 1 : INTRO_S;
+    return;
+  }
+  const t = (now - intro.t0) / 1000 + intro.offset;
+  intro.t = t;
+  for (const ev of intro.events) if (!ev.fired && t >= ev.t) { ev.fired = true; ev.run(); }
+  const sk = clamp((t - T.scan0) / Math.max(0.01, T.scan1 - T.scan0), 0, 1);
+  intro.scanX = t >= T.scan1 ? 1e4 : lerp(SCAN[0], SCAN[1], easeInOut(sk));
+  if (reduceMotion) intro.scanX = 1e4;
+  for (const N of lessons) if (!N.revealed && N.p[0] <= intro.scanX) { N.revealed = true; if (!reduceMotion) N.ping = 0.6; }
+  // Learned neurons switch on in the order you mastered them; the counter follows.
+  let onCount = 0;
+  for (const N of journeyOn) {
+    if (!N.on && t >= N.onAt && N.revealed) { N.on = true; N.ping = 1; score.sfx('step'); refreshLive(); }
+    if (N.on) onCount++;
+  }
+  if (!introDone) {
+    const s = graph.stats();
+    hud.firing = onCount; hud.score = Math.round((400 + (s.score - 400) * (onCount / Math.max(1, s.mastered))) / 10) * 10; renderHud();
+  }
+  // The frontier charges during the riser.
+  if (t >= T.riser && t < T.impact) { const k = (t - T.riser) / (T.impact - T.riser); for (const N of lessons) if (!N.on && N.n.state === 'frontier') N.charge = k * k; }
+  else for (const N of lessons) N.charge = 0;
+  intro.ghost = t < T.on0 ? 0.5 : 0.42;
+  intro.lit = t < T.impact ? lerp(0.35, 0.7, clamp((t - T.on0) / (T.impact - T.on0), 0, 1)) : Math.min(1, 0.7 + (t - T.impact) * 1.5);
+  intro.activity = t < T.on1 ? 0 : t < T.impact ? 0.4 : 1;
+  const e = reduceMotion ? 1 : easeInOut(clamp(t / T.turn, 0, 1));
+  intro.yawOff = lerp(INTRO_YAW, 0, e) * (reduceMotion ? 0 : 1);
+  intro.pitchOff = lerp(INTRO_PITCH, 0, e) * (reduceMotion ? 0 : 1);
+  intro.sMul = reduceMotion ? 1 : lerp(INTRO_S, 1, e);
+  intro.labels = clamp((t - T.impact - 0.3) / 0.6, 0, 1);
+  intro.regionLabels = clamp((t - T.on0 - 0.3) / 0.8, 0, 1);
+  intro.wave = Math.max(0, intro.wave - dt * 1.1);
+}
+
+// ════════════════════════ Music follows activity and depth ════════════════════════
+let musicAt = 0;
+function musicUpdate(now, dt) {
+  boost = Math.max(0, boost - dt * 0.08);
+  if (!introDone || now < musicAt) return;
+  musicAt = now + 500;
+  const act = clamp(fireRate / 12, 0, 1);
+  score.setIntensity(clamp(0.3 + 0.2 * root.m + (focus === root ? 0 : 0.12) + 0.12 * act + boost, 0, 1), 2.5);
+}
+
+// ════════════════════════ Input ════════════════════════
+function movePointer(x, y, now, overUI = false) {
+  const d = Math.hypot(x - pointer.x, y - pointer.y);
+  if (pointer.in && d > 0.5) { const gap = Math.max(8, now - pointer.lastMoveAt); pointer.speed = lerp(pointer.speed, (d / gap) * 1000, clamp(gap / 60, 0.2, 1)); pointer.lastMoveAt = now; nav.sinceRest += d; if (now >= lockUntil) pointer.travel += d; if (hint.shownAt && now - hint.shownAt > 500) dismissHint(); }
+  pointer.x = x; pointer.y = y; pointer.in = true; pointer.real = true; pointer.overUI = overUI;
+  updateHover(); setCursor(); // hover feedback the moment the pointer moves, not a frame later
+}
+addEventListener('pointermove', (e) => { if (e.pointerType !== 'touch') { pointer.parked = false; movePointer(e.clientX, e.clientY, performance.now(), e.target !== cv); } });
+document.addEventListener('pointerleave', () => { pointer.in = false; updateHover(); });
+document.documentElement.addEventListener('mouseleave', () => { pointer.in = false; updateHover(); });
+cv.addEventListener('pointerup', (e) => {
+  if (!navOn) return;
+  const x = e.clientX, y = e.clientY, touch = e.pointerType === 'touch';
+  if (touch) { pointer.x = x; pointer.y = y; }
+  let leaf;
+  if (touch && focus === root) {
+    // On a phone the zoomed-out neurons are tiny: a tap opens the recommended one, otherwise it zooms in.
+    leaf = nextN && Math.hypot(x - nextN.sx, y - nextN.sy) < 28 ? nextN : null;
+  } else leaf = leafAt(x, y, hoverLeaf);
+  if (leaf) { card.open(leaf.n); return; }
+  const R = regionAt(x, y);
+  if (focus === root) { if (R) setFocus(R.dom); return; }
+  if (R && R !== focus.R) { setFocus(R.dom); return; }
+  if (!R && touch) setFocus(root, { sound: 'back' });
+});
+addEventListener('keydown', (e) => {
+  if (!navOn) return;
+  if (e.key === 'Escape' && !cardOpen && performance.now() - lastCardClose > 80 && focus !== root) setFocus(root, { sound: 'back' });
+});
+
+// ════════════════════════ QA params & loop ════════════════════════
+const demo = params.get('demo');
+intro.offset = params.has('t') ? parseFloat(params.get('t')) || 0 : demo ? 99 : 0;
+const findRegion = (s) => { s = (s || '').toLowerCase(); return (REGIONS.find((R) => R.key === s || R.domain.toLowerCase().startsWith(s)) || REGIONS[0]).dom; };
+const findLesson = (s) => graph.leaves.find((l) => l.label.toLowerCase() === (s || '').toLowerCase());
+function parkPointer() {
+  if (!params.has('px') && !params.has('py')) return;
+  const v = (k, full) => { const q = parseFloat(params.get(k)); return Number.isFinite(q) ? (q <= 1 ? q * full : q) : full / 2; };
+  pointer.parked = true;
+  movePointer(v('px', W), v('py', H), performance.now());
+}
+function runDemo() {
+  if (demo === 'full') {
+    // QA: every lesson mastered, so every region is full.
+    for (const l of graph.leaves) if (!l.mastered) { l.mastered = true; l.progress = 1; l.masteredAt = new Date(); }
+    graph.recompute();
+    for (const N of lessons) { N.hold = null; N.on = true; }
+    refreshLive(); setHudTargets(undefined, true); setNext(null);
+  }
+  if (demo === 'region' || demo === 'hover') setFocus(findRegion(params.get('region') || (demo === 'hover' ? nextN?.R.key : 'algebra')), { quiet: true });
+  if (demo === 'complete') {
+    const l = findLesson(params.get('lesson')) || nextN?.n;
+    if (l) card.open(l);
+    setTimeout(() => card.el.querySelector('.actions .kg-btn.primary')?.click(), 450);
+  }
+  snapCamera();
+  if (demo === 'hover') {
+    const F = focus.R;
+    forcedHover = F.neurons.find((N) => N === nextN) || F.neurons.find((N) => isFrontierKey(vkey(N))) || F.neurons[0];
+  }
+  if (demo === 'next') { pill.forceHot = true; setTimeout(() => { if (pill.rect) { pointer.parked = true; movePointer((pill.rect[0] + pill.rect[2]) / 2, (pill.rect[1] + pill.rect[3]) / 2, performance.now()); } }, 400); }
+  parkPointer();
+}
+
+renderHud();
+VP = viewport();
+snapCamera();
+let last = performance.now(), paused = false, demoRan = false;
+function tick(now) {
+  now = Math.max(now, last);
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = clock = now;
+  VP = viewport();
+  introUpdate(now, dt);
+  if (introDone && !demoRan) { demoRan = true; runDemo(); }
+  handlePointer(now);
+  computeTargets(dt);
+  animate(dt, now);
+  simulate(dt, now);
+  draw(now, dt);
+  hudUpdate(now);
+  musicUpdate(now, dt);
+}
+let dbgFrames = 0, dbgAt = 0;
+function frame() {
+  const now = performance.now();
+  if (!paused) { tick(now); const ms = performance.now() - now; perf.n++; perf.sum += ms; perf.max = Math.max(perf.max, ms); }
+  if (dbgEl) { dbgFrames++; if (now - dbgAt > 1000) { dbgEl.textContent += `t=${(now / 1000).toFixed(1)} frames=${dbgFrames} pulses=${pulses.length} focus=${focus.label}\n`; dbgFrames = 0; dbgAt = now; } }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+// If rAF goes quiet (background tab in some headless modes), keep time moving from a timer.
+setInterval(() => { const now = performance.now(); if (!paused && !document.hidden && now - last > 120) tick(now); }, 16);
+window.__b3 = {
+  graph, regions: REGIONS, lessons, topics, cam, orb, V, card, setFocus, snapCamera, movePointer, tick, NP: () => NP, counts: () => ({ NP, NV, NGV, segs: GS.length, cand: nCand.map((c) => c.length) }),
+  regionScreen: (key) => { const R = REGIONS.find((r) => r.key === key); return [R.sx, R.sy]; },
+  lessonScreen: (name) => { const N = lessons.find((n) => n.n.label === name); return [N.sx, N.sy]; },
+  nextScreen: () => (nextN ? [nextN.sx, nextN.sy] : null),
+  pillRect: () => (pill.rect ? pill.rect.map(Math.round) : null),
+  get focus() { return focus.label; }, get next() { return nextN?.n.label; }, get hover() { return hoverLeaf?.n.label; }, get pulses() { return pulses.length; },
+  pause(v) { paused = v; last = performance.now(); },
+  perf() { const r = { frames: perf.n, avgMs: +(perf.sum / Math.max(1, perf.n)).toFixed(2), maxMs: +perf.max.toFixed(2) }; Object.assign(perf, { n: 0, sum: 0, max: 0 }); return r; },
+};
+</script>
+</body>
+</html>

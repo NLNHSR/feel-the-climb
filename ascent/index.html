@@ -1,0 +1,1316 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>The Ascent</title>
+<link rel="icon" href="data:," />
+<link rel="stylesheet" href="../shared/dolphin.css" />
+<style>
+  html, body { overflow: hidden; background: #2F9AE6; }
+  body { color: var(--ink); --hud-fg: #0A234F; }
+  #scene { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; touch-action: none; }
+
+  /* Type: 40 display, 16 label, 13 small. Spacing: multiples of 8. */
+  /* Top-left: the one status element */
+  .hud { position: fixed; top: 24px; left: 24px; z-index: 20; pointer-events: none; color: var(--hud-fg); transition: color 500ms ease; }
+  .hud .day { font-family: var(--font-head); font-size: 40px; line-height: 1; font-variant-numeric: tabular-nums; }
+  .hud .sub { font: 700 13px/16px var(--font-body); margin-top: 8px; opacity: 0.8; }
+
+  .home-pill {
+    position: fixed; top: 24px; left: 50%; z-index: 21; --tx: -50%;
+    height: 40px; padding: 0 16px 0 12px; border-radius: 20px; font: 700 13px/1 var(--font-body); cursor: pointer;
+    display: flex; align-items: center; gap: 8px; background: var(--foam); color: var(--ink); border: 2px solid var(--mist);
+    box-shadow: 0 3px 0 var(--chrome-shadow); opacity: 0; transform: translate(var(--tx), -8px); pointer-events: none;
+    transition: opacity 200ms cubic-bezier(.2,.8,.2,1), transform 240ms cubic-bezier(.2,.8,.2,1);
+  }
+  .home-pill.show { opacity: 1; transform: translate(var(--tx), 0); pointer-events: auto; }
+  .home-pill.show:active { transform: translate(var(--tx), 3px); box-shadow: none; }
+  @media (max-width: 640px) { .home-pill { left: auto; right: 16px; top: 16px; --tx: 0px; } }
+  .home-pill svg { width: 16px; height: 16px; transition: transform 200ms ease; }
+
+  /* Hover label */
+  .tip {
+    position: fixed; left: 0; top: 0; z-index: 25; pointer-events: none; max-width: 256px;
+    background: var(--foam); color: var(--ink); border: 2px solid var(--mist); border-radius: 16px;
+    box-shadow: 0 3px 0 rgba(10, 35, 79, 0.14); padding: 8px 16px 12px;
+    opacity: 0; transition: opacity 120ms ease-out;
+  }
+  .tip.show { opacity: 1; }
+  .tip .dom { display: flex; align-items: center; gap: 8px; font: 700 13px/16px var(--font-body); color: var(--muted); }
+  .tip .dom i { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .tip .t { font-family: var(--font-head); font-size: 16px; line-height: 20px; margin: 4px 0; }
+  .tip .m { font: 700 13px/16px var(--font-body); color: var(--muted); }
+
+  /* The frontier invite: the one thing to click */
+  .next-pill {
+    position: fixed; left: 0; top: 0; z-index: 22; cursor: pointer; white-space: nowrap;
+    display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 16px; border-radius: 20px;
+    background: var(--sun); color: var(--ink); border: 2px solid var(--sun-shadow); box-shadow: 0 3px 0 var(--sun-shadow);
+    font: 700 13px/1 var(--font-body); opacity: 0; pointer-events: none; transition: opacity 200ms ease-out;
+  }
+  .next-pill.show { opacity: 1; pointer-events: auto; }
+  .next-pill .l { font-family: var(--font-head); font-size: 16px; max-width: 216px; overflow: hidden; text-overflow: ellipsis; }
+  .next-pill svg { width: 16px; height: 16px; }
+  .next-pill:active { box-shadow: 0 0 0 var(--sun-shadow); translate: 0 3px; }
+  .next-pill::after { content: ""; position: absolute; left: 50%; bottom: -8px; width: 12px; height: 12px; margin-left: -6px; background: var(--sun); border-right: 2px solid var(--sun-shadow); border-bottom: 2px solid var(--sun-shadow); transform: rotate(45deg); border-bottom-right-radius: 3px; }
+  .next-pill.below::after { bottom: auto; top: -8px; transform: rotate(225deg); }
+
+  /* One-time hint */
+  .hint { position: fixed; left: 50%; bottom: 80px; transform: translate(-50%, 8px); z-index: 30; pointer-events: none; white-space: nowrap;
+    font: 700 13px/16px var(--font-body); color: var(--chrome-fg); opacity: 0; transition: opacity 400ms ease-out, transform 400ms cubic-bezier(.2,.8,.2,1); }
+  .hint.show { opacity: 0.85; transform: translate(-50%, 0); }
+
+  @media (max-width: 640px) {
+    .hud { top: 16px; left: 16px; }
+    .hud .day { font-size: 32px; }
+    .next-pill .l { max-width: 168px; }
+    .tip { max-width: 224px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .tip, .home-pill, .hint { transition: none; }
+  }
+</style>
+</head>
+<body>
+<canvas id="scene" role="img" aria-label="A staircase of 89 SAT lessons climbing from sea level into the night sky. Each step is a lesson; your glowing marker stands on the next one. Move the pointer up or down the stairs to look along it; arrow keys also move."></canvas>
+
+<header class="hud" aria-live="polite">
+  <div class="day" id="dayNum">Day 1</div>
+  <div class="sub" id="hudSub"></div>
+</header>
+
+<button class="home-pill" id="homePill" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg><span>Back to you</span></button>
+<div class="tip" id="tip" role="tooltip"></div>
+<button class="next-pill" id="nextPill" type="button"><span>Next:</span><span class="l" id="nextLabel"></span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
+<div class="hint" id="hint" aria-live="polite"></div>
+
+<script type="module">
+// ─── Sound design (for sourcing audio; every event fires on the matching visual, never at random) ───
+// Music: epic and determined, a slow climb. Low strings and a heartbeat pulse at sea level, building
+//   with altitude into driving taiko drums, brass swells and a soaring string line near the summit.
+//   Dorian/minor, ~70 bpm at the bottom rising to ~120 at the top; score.setIntensity follows camera height.
+// hover   : pointer reaches a step. Soft, dry stone tap (a knuckle on marble), short, no tail.
+// select  : a step, the summit or the meter is chosen. Firm stone "clack" with a light chime on top.
+// back    : card closed / Esc / "Back to you". Same clack, lower and softer, slightly reversed feel.
+// zoomIn  : camera pushes in toward the stairs. Short airy whoosh rising in pitch, close and dry.
+// zoomOut : camera pulls back to the wide view. Wider, falling wind whoosh with a hint of altitude air.
+// start   : lesson begins. Rope-tightening creak into a short drum roll: commitment, not celebration.
+// complete: lesson mastered, the step turns solid. Deep stone thud plus a bright brass/bell hit.
+// unlock  : a new step appears out of the clouds. Rising shimmer of plucked strings, airy, hopeful.
+// intro   : intro payoff (arrival on today's step). Big cinematic impact: low boom, cymbal, brass chord.
+// riser   : 2.4 s build into the intro payoff. Orchestral riser: strings + noise swelling upward.
+// step    : the climber's footstep as it lands on a step. Solid stone footstep, light, slightly varied.
+//
+// The Ascent: one chunky 2.5D step per lesson (graph.journey() order), sea level to the 1500 summit.
+// Navigation: point up/down the stairs to lean + keep climbing, pull away from them to zoom out,
+// hover the altitude meter to scrub; wheel, drag (touch) and arrow keys also work. Click any step for its card.
+// QA params: ?skipgate=1  &t=<sec> (jump into the intro; 99 = settled)  &demo=intro|hover|complete|summit|overview|locked
+//            &ff=<sec> (fast-forward sim)  &px=<0-1>&py=<0-1> (park a virtual mouse)  &notrans=1 (freeze CSS transitions)  &debug=1
+import { createGraph, DOMAIN_HUES, clamp } from '../shared/graph.js';
+import { mountChrome, params } from '../shared/chrome.js';
+import { createLessonCard } from '../shared/lesson-card.js';
+
+// ═══════════════════════ Utilities ═══════════════════════
+const TAU = Math.PI * 2;
+const lerp = (a, b, t) => a + (b - a) * t;
+const smooth = (e0, e1, x) => { const t = clamp((x - e0) / (e1 - e0), 0, 1); return t * t * (3 - 2 * t); };
+const easeInOutCubic = (u) => (u < 0.5 ? 4 * u * u * u : 1 - Math.pow(-2 * u + 2, 3) / 2);
+const hex = (h) => { h = h.trim(); return [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)]; };
+const mixc = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+const rgba = (c, a = 1) => `rgba(${c[0] | 0},${c[1] | 0},${c[2] | 0},${a})`;
+const lum = (c) => (0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]) / 255;
+function rng(a) { return () => { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+// One clock for every animation; QA fast-forward (?ff=seconds) advances it in fixed steps.
+let clockOffset = 0;
+const clock = () => performance.now() + clockOffset;
+if (new URLSearchParams(location.search).has('notrans')) {
+  const st = document.createElement('style'); st.textContent = '*, *::before, *::after { transition: none !important; animation: none !important; }'; document.head.append(st);
+}
+
+// Palette straight from the Dolphin tokens in dolphin.css.
+const css = getComputedStyle(document.documentElement);
+const tok = (n) => hex(css.getPropertyValue('--' + n) || '#000000');
+const C = {
+  sky: tok('sky'), ink: tok('ink'), muted: tok('muted'), foam: tok('foam'), paper: tok('paper'), mist: tok('mist'),
+  cloud: tok('cloud'), cloudSoft: tok('cloud-soft'), w1: tok('wave-1'), w2: tok('wave-2'), w3: tok('wave-3'),
+  wShadow: tok('wave-shadow'), night: tok('night'), nightDeep: tok('night-deep'), nightInk: tok('night-ink'),
+  sun: tok('sun'), sunShadow: tok('sun-shadow'), success: tok('success'), coral: tok('coral'),
+};
+const HUE = Object.fromEntries(Object.entries(DOMAIN_HUES).map(([k, v]) => [k, hex(v)]));
+const HEAD = '"VAG Rundschrift D", "Manrope", system-ui, sans-serif';
+const BODY = '"Manrope", system-ui, sans-serif';
+
+// ═══════════════════════ Data ═══════════════════════
+const graph = createGraph();
+let journey = graph.journey();
+const N = journey.length;
+const DAY = 86400000;
+const midnight = (d) => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x.getTime(); };
+const firstDay = midnight(Math.min(...graph.leaves.filter((l) => l.masteredAt).map((l) => l.masteredAt.getTime())));
+const dayOf = (l) => Math.round((midnight(l.masteredAt) - firstDay) / DAY) + 1;
+let stats = graph.stats();
+const climberIndex = () => { const i = journey.findIndex((l) => l.state !== 'mastered'); return i < 0 ? N : i; };
+let climber = climberIndex();
+const firstLocked = () => { const i = journey.findIndex((l) => l.state === 'locked'); return i < 0 ? N : i; };
+const domainEnd = () => { const m = new Map(); journey.forEach((l, i) => m.set(l.domain.label, i)); return new Map([...m].map(([k, v]) => [v, k])); };
+let domainEnds = domainEnd();
+
+// Landings: wide platforms at 25 / 50 / 75 % of the climb.
+const LANDINGS = new Map([[Math.round(N * 0.25) - 1, '25%'], [Math.round(N * 0.5) - 1, 'Halfway'], [Math.round(N * 0.75) - 1, '75%']]);
+const GOAL = 1500, FLOOR = 400;
+
+// ═══════════════════════ Chrome + card ═══════════════════════
+const { score, caption } = mountChrome({
+  id: 'ascent',
+  eyebrow: 'Your SAT knowledge graph',
+  title: 'The Ascent',
+  tagline: `Sea level to ${GOAL}, one lesson per step. You’ve already climbed ${stats.mastered} of ${N}. Time to see how high that really is.`,
+  gateBackground: 'radial-gradient(ellipse at 50% 46%, rgba(10,35,79,0.78) 0%, rgba(10,35,79,0.55) 40%, rgba(16,59,132,0.25) 75%, rgba(16,59,132,0.1) 100%)',
+  beginLabel: 'Start the climb',
+  onBegin: () => startIntro(),
+});
+const card = createLessonCard(graph, {
+  score,
+  caption: () => {}, // the climb itself says it; celebrate() adds one specific line instead of a generic one
+  onComplete: (evt) => celebrate(evt),
+  onOpen: (n) => {
+    cardOpen = true; hideTip();
+    // Keep the camera still unless the lesson's step would sit under the card or off-screen.
+    const i = journey.indexOf(n);
+    if (i >= 0) {
+      const [sx, sy] = P(...treadC(i)), r = card.el.getBoundingClientRect();
+      if (sx < 48 || sx > VW - 48 || sy < 112 || sy > VH - 96 || (sx > r.left - 40 && sy > r.top - 40)) { anchor = i; nav.lean = 0; }
+    }
+  },
+  onClose: () => {
+    cardOpen = false; closedAt = clock(); score.sfx('back');
+    if (heldCaption && clock() - heldCaption.at < 15000) setTimeout(() => caption(heldCaption.line, 3000), 250);
+    heldCaption = null;
+  },
+});
+let cardOpen = false;
+
+// ═══════════════════════ Canvas + geometry ═══════════════════════
+const cv = document.getElementById('scene');
+const ctx = cv.getContext('2d');
+let VW = 0, VH = 0, DPR = 1, baseK = 1, OX = 0, OY = 0;
+const G = { W: 132, H: 70, DX: -72, DY: 56, THICK: 96 };
+let xs = [], ws = [], tops = [], SUMMIT_Y = 1;
+
+function buildGeometry() {
+  const a = VW / VH;
+  G.W = a < 0.75 ? 88 : a < 1.15 ? 110 : 132;
+  G.DX = -G.W * 0.55; G.DY = G.W * 0.34 + 12;
+  xs = []; ws = []; tops = [];
+  let x = 0;
+  for (let i = 0; i <= N; i++) {
+    const w = i === N ? G.W * 4.6 : LANDINGS.has(i) ? G.W * 2.5 : G.W;
+    xs.push(x); ws.push(w); tops.push((i + 1) * G.H);
+    x += w;
+  }
+  SUMMIT_Y = tops[N];
+  const half = VW < 640 ? 4.3 : 7.2;
+  baseK = Math.min((VW * 0.5) / (G.W * half), (VH * 0.5) / (G.H * half * 1.05));
+}
+function resize() {
+  VW = innerWidth; VH = innerHeight; DPR = Math.min(2, devicePixelRatio || 1);
+  cv.width = Math.round(VW * DPR); cv.height = Math.round(VH * DPR);
+  OX = VW * (VW < 640 ? 0.55 : 0.53); OY = VH * 0.5;
+  buildGeometry();
+}
+addEventListener('resize', () => { resize(); hudRect = null; });
+resize();
+
+const treadC = (i) => [xs[i] + ws[i] / 2 + G.DX / 2, tops[i] + G.DY / 2];
+function stairPoint(s) {
+  if (s <= 0) { const [x, y] = treadC(0); return [x + s * G.W, y + s * G.H]; }
+  if (s >= N) { const [x, y] = treadC(N); return [x + (s - N) * G.W * 0.8, y]; }
+  const i = Math.floor(s), f = s - i, a = treadC(i), b = treadC(i + 1);
+  return [lerp(a[0], b[0], f), lerp(a[1], b[1], f)];
+}
+
+// Projected score along the climb: 400 at sea level, the live score at the climber, the goal at the summit.
+let meterScore = FLOOR, meterC = climber;
+function scoreAtS(s, c = meterC, sc = stats.score) {
+  s = clamp(s, 0, N);
+  if (c <= 0) return lerp(sc, GOAL, s / N);
+  return s <= c ? lerp(FLOOR, sc, s / c) : lerp(sc, GOAL, (s - c) / Math.max(1, N - c));
+}
+function sAtScore(v, c = meterC, sc = stats.score) {
+  if (v <= sc) return c * (v - FLOOR) / Math.max(1, sc - FLOOR);
+  return c + (N - c) * (v - sc) / Math.max(1, GOAL - sc);
+}
+
+// ═══════════════════════ Camera ═══════════════════════
+const cam = { s: 9, z: 0.5, x: 0, y: 0, vs: 0, vz: 0 };
+let K = 1;
+let anchor = 2, targetS = 2, targetZ = 0.72;
+let focusLockUntil = 0;
+function springTo(dt, ws, wz) {
+  const steps = Math.max(1, Math.ceil(dt * 240)), h = dt / steps;
+  let lz = Math.log(cam.z); const tz = Math.log(targetZ);
+  for (let i = 0; i < steps; i++) {
+    cam.vs += (ws * ws * (targetS - cam.s) - 2 * ws * cam.vs) * h; cam.s += cam.vs * h;
+    cam.vz += (wz * wz * (tz - lz) - 2 * wz * cam.vz) * h; lz += cam.vz * h;
+  }
+  cam.z = Math.exp(lz);
+}
+function applyCam() {
+  K = baseK * cam.z;
+  const [x, y] = stairPoint(cam.s);
+  // Near the top, frame a little higher so the goal flag is never cropped.
+  cam.x = x; cam.y = y - 26 + smooth(N - 8, N, cam.s) * 170;
+}
+const P = (wx, wy) => [OX + (wx - cam.x) * K, OY - (wy - cam.y) * K];
+const PP = (wx, wy, p) => [OX + (wx - cam.x) * K * p, OY - (wy - cam.y) * K * p];
+const altAtY = (sy) => cam.y + (OY - sy) / K;
+const worldT = () => ctx.setTransform(DPR * K, 0, 0, -DPR * K, DPR * (OX - cam.x * K), DPR * (OY + cam.y * K));
+const screenT = () => ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+
+// ═══════════════════════ Sky ═══════════════════════
+const SKY = [[-0.3, C.sky], [0, C.sky], [0.13, C.w1], [0.27, C.w2], [0.41, C.w3], [0.55, C.wShadow], [0.69, C.night], [0.83, C.nightDeep], [1.0, C.nightInk], [2, C.nightInk]];
+function skyAt(f) {
+  for (let i = 1; i < SKY.length; i++) if (f <= SKY[i][0]) { const [a, ca] = SKY[i - 1], [b, cb] = SKY[i]; return mixc(ca, cb, clamp((f - a) / (b - a), 0, 1)); }
+  return SKY[SKY.length - 1][1];
+}
+const skyAtY = (sy) => skyAt(altAtY(sy) / SUMMIT_Y);
+
+const R = rng(7);
+const stars = Array.from({ length: 260 }, () => ({ x: R(), y: R(), r: 0.5 + R() * R() * 1.9, tw: R() * TAU, sp: 0.6 + R() * 2.2 }));
+
+// ═══════════════════════ Clouds ═══════════════════════
+function makeCloud(seed, blur, tint) {
+  const r = rng(seed);
+  const BW = 400, BH = 160, pad = Math.ceil(blur * 2.6) + 6;
+  const c = document.createElement('canvas'); c.width = BW + pad * 2; c.height = BH + pad * 2;
+  const g = c.getContext('2d');
+  if (blur) g.filter = `blur(${blur}px)`;
+  const base = pad + BH * 0.88;
+  const gr = g.createLinearGradient(0, pad, 0, base);
+  gr.addColorStop(0, rgba(tint[0])); gr.addColorStop(0.6, rgba(tint[1])); gr.addColorStop(1, rgba(tint[2]));
+  g.fillStyle = gr; g.beginPath();
+  const n = 4 + Math.floor(r() * 3);
+  for (let i = 0; i < n; i++) {
+    const t = i / (n - 1);
+    const cx = pad + BW * (0.17 + 0.66 * t) + (r() - 0.5) * 18;
+    const rad = BH * (0.2 + 0.36 * Math.sin(Math.PI * (0.12 + 0.76 * t))) * (0.78 + 0.44 * r());
+    const cy = base - rad * 0.92;
+    g.moveTo(cx + rad, cy); g.arc(cx, cy, rad, 0, TAU);
+  }
+  g.roundRect(pad + BW * 0.07, base - BH * 0.26, BW * 0.86, BH * 0.26, BH * 0.13);
+  g.fill();
+  return { c, pad, BW, BH };
+}
+const DAY_TINT = [C.foam, C.foam, mixc(C.mist, C.w1, 0.35)];
+const NIGHT_TINT = [mixc(C.foam, C.w1, 0.35), mixc(C.w2, C.night, 0.45), mixc(C.night, C.wShadow, 0.35)];
+const SPRITES = {};
+for (const blur of [2, 6]) SPRITES[blur] = [0, 1, 2, 3].map((k) => ({ day: makeCloud(11 + k * 7, blur, DAY_TINT), night: makeCloud(11 + k * 7, blur, NIGHT_TINT) }));
+
+// Clouds live in stair-relative coordinates (s along the climb, x offset in step widths) so resizes keep them in place.
+const clouds = [];
+{
+  const r = rng(424242);
+  const add = (n, f) => { for (let i = 0; i < n; i++) clouds.push(f(r)); };
+  // far, slow
+  add(34, (r) => ({ s: -14 + r() * (N + 30), ox: (r() < 0.5 ? -1 : 1) * (3 + r() * 12), oy: -500 + r() * 1000, p: 0.3 + r() * 0.25, sc: 0.7 + r() * 0.8, a: 0.75, blur: 6, k: r() * 4 | 0, dr: 4 + r() * 6 }));
+  // mid, behind the stairs
+  add(30, (r) => ({ s: -6 + r() * (N + 10), ox: (r() < 0.5 ? -1 : 1) * (1.5 + r() * 7), oy: -260 + r() * 560, p: 0.62 + r() * 0.3, sc: 0.75 + r() * 0.8, a: 0.92, blur: 2, k: r() * 4 | 0, dr: 6 + r() * 8 }));
+  // cloud sea the locked steps disappear into
+  add(22, (r) => ({ s: 64 + r() * (N - 69), ox: -5 + r() * 10, oy: -300 + r() * 260, p: 0.86 + r() * 0.16, sc: 1.2 + r() * 1.0, a: 0.85, blur: 2, k: r() * 4 | 0, dr: 3 + r() * 4, sea: true }));
+  // foreground, the stairs pass through these
+  add(6, (r) => ({ s: 68 + r() * (N - 74), ox: -3 + r() * 6, oy: -300 + r() * 200, p: 1.06 + r() * 0.12, sc: 1.2 + r() * 0.8, a: 0.94, blur: 2, k: r() * 4 | 0, dr: 3 + r() * 4, fg: true, sea: true }));
+}
+
+// ═══════════════════════ Step palettes ═══════════════════════
+const KEYS = ['tread', 'riser', 'lip', 'fTop', 'fBot'];
+const palCache = new Map();
+function masteredPal(h) {
+  const k = h.join(',');
+  if (!palCache.has(k)) palCache.set(k, { tread: mixc(C.foam, h, 0.13), riser: h, lip: h, fTop: mixc(C.foam, C.mist, 0.2), fBot: mixc(C.mist, C.wShadow, 0.6) });
+  return palCache.get(k);
+}
+const FRONT = { tread: C.sun, riser: C.sunShadow, lip: C.sunShadow, fTop: mixc(C.sun, C.foam, 0.4), fBot: mixc(C.sunShadow, C.coral, 0.3) };
+const DORMANT = { tread: mixc(C.mist, C.cloudSoft, 0.4), riser: mixc(C.cloud, C.muted, 0.25), lip: C.cloud, fTop: mixc(C.mist, C.cloudSoft, 0.6), fBot: mixc(C.cloud, C.muted, 0.55) };
+const LOCKED = { tread: C.mist, riser: C.cloudSoft, lip: C.cloudSoft, fTop: mixc(C.paper, C.mist, 0.5), fBot: C.cloud };
+const SUMMIT = { tread: mixc(C.foam, C.sun, 0.16), riser: C.sunShadow, lip: C.sun, fTop: mixc(C.foam, C.mist, 0.3), fBot: mixc(C.mist, C.night, 0.55) };
+
+// Per-step animated visual state.
+const V = Array.from({ length: N + 1 }, (_, i) => {
+  const l = journey[i];
+  return { m: l?.state === 'mastered' ? 1 : 0, f: l?.state === 'frontier' ? 1 : 0, lit: i === N ? 1 : 0, flash: 0, flashC: C.foam, lift: 0, litT: 0 };
+});
+
+function stepPal(i, out) {
+  if (i === N) { for (const k of KEYS) out[k] = SUMMIT[k]; out.alpha = 1; return out; }
+  const v = V[i], l = journey[i];
+  const mp = masteredPal(HUE[l.domain.label]);
+  const wm = v.m, wf = v.f, wl = clamp(1 - wm - wf, 0, 1);
+  const aer = skyAt(tops[i] / SUMMIT_Y);
+  const fog = fogAt(i);
+  for (const k of KEYS) {
+    const mk = mixc(DORMANT[k], mp[k], v.lit), fk = mixc(DORMANT[k], FRONT[k], v.lit);
+    let c = [LOCKED[k][0] * wl + fk[0] * wf + mk[0] * wm, LOCKED[k][1] * wl + fk[1] * wf + mk[1] * wm, LOCKED[k][2] * wl + fk[2] * wf + mk[2] * wm];
+    // Locked steps stay solid but sink into the fog colour of their altitude.
+    c = mixc(c, wl > 0 ? mixc(aer, C.mist, 0.3) : aer, 0.06 + wl * (0.28 + 0.5 * fog) * (1 - v.lift * 0.7));
+    if (wf > 0 && i !== climber && (k === 'fTop' || k === 'fBot')) c = mixc(c, C.foam, 0.32 * wf * v.lit);
+    if (v.flash > 0) c = mixc(c, v.flashC, Math.min(1, v.flash));
+    out[k] = c;
+  }
+  out.alpha = 1;
+  return out;
+}
+let lockStart = firstLocked();
+function fogAt(i) { return smooth(lockStart - 1, lockStart + 8, i) * (1 - 0.75 * smooth(N - 6, N - 1, i)); }
+
+// ═══════════════════════ Particles ═══════════════════════
+const parts = [];
+function burst(wx, wy, n, colors, power = 1) {
+  for (let i = 0; i < n; i++) {
+    const a = Math.random() * TAU, sp = (160 + Math.random() * 420) * power;
+    parts.push({ x: wx, y: wy, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp * 0.8 + 260 * power, g: -620, life: 0, max: 1.1 + Math.random() * 0.9,
+      size: 5 + Math.random() * 9, c: colors[(Math.random() * colors.length) | 0], rot: Math.random() * TAU, vr: (Math.random() - 0.5) * 12, kind: Math.random() < 0.55 ? 'sq' : 'dot' });
+  }
+}
+const rings = [];
+const trail = [];
+
+// ═══════════════════════ Pointer + navigation ═══════════════════════
+const pointer = { x: 0, y: 0, in: false, active: false, lastMove: 0, type: 'mouse', down: false, dragging: false, sx: 0, sy: 0, lastY: 0, lastX: 0, vel: 0, onMeter: false };
+let hovered = -1, lastHovered = -1, forcedHover = -1;
+let dragVel = 0;
+
+function meterBox() {
+  const phone = VW < 640;
+  return phone ? { x: 12, top: 112, bot: VH - 152, w: 8, lw: 40, phone } : { x: 28, top: 136, bot: VH - 120, w: 8, lw: 64, phone };
+}
+const meterY = (s, m = meterBox()) => m.bot - (clamp(s, 0, N) / N) * (m.bot - m.top);
+const meterS = (y, m = meterBox()) => clamp((m.bot - y) / (m.bot - m.top), 0, 1) * N;
+function inMeter(x, y) { const m = meterBox(); return x < m.x + m.w + m.lw + 20 && y > m.top - 34 && y < m.bot + 26; }
+
+cv.addEventListener('pointermove', (e) => {
+  pointer.type = e.pointerType;
+  const now = clock();
+  if (e.pointerType === 'touch' || pointer.down) {
+    if (pointer.down) {
+      const dx = e.clientX - pointer.lastX, dy = e.clientY - pointer.lastY;
+      if (Math.hypot(e.clientX - pointer.sx, e.clientY - pointer.sy) > 8) pointer.dragging = true;
+      if (pointer.dragging && phase === 'live') {
+        const ds = (dy / (G.H * K) - dx / (G.W * K)) * 0.55;
+        anchor = clamp(anchor + ds, -1, N + 0.3);
+        dragVel = ds / Math.max(0.008, (now - pointer.lastMove) / 1000);
+      }
+      pointer.lastX = e.clientX; pointer.lastY = e.clientY;
+    }
+  }
+  pointer.x = e.clientX; pointer.y = e.clientY; pointer.in = true; pointer.lastMove = now;
+  pointer.active = e.pointerType !== 'touch';
+  if (hintState === 'showing' && now - hintAt > 600) hideHint();
+});
+cv.addEventListener('pointerleave', () => { pointer.in = false; if (!pointer.down) hovered = -1; });
+document.addEventListener('mouseout', (e) => { if (!e.relatedTarget) { pointer.active = false; pointer.in = false; } });
+cv.addEventListener('pointerdown', (e) => {
+  pointer.down = true; pointer.dragging = false; pointer.sx = pointer.lastX = e.clientX; pointer.sy = pointer.lastY = e.clientY; dragVel = 0;
+  pointer.x = e.clientX; pointer.y = e.clientY; pointer.lastMove = clock();
+  if (e.pointerType === 'touch') cv.setPointerCapture?.(e.pointerId);
+});
+cv.addEventListener('pointerup', (e) => {
+  const wasDrag = pointer.dragging;
+  pointer.down = false; pointer.dragging = false;
+  if (e.pointerType === 'touch') { pointer.active = false; }
+  if (wasDrag || phase !== 'live') return;
+  if (inMeter(e.clientX, e.clientY)) { anchor = meterS(e.clientY); nav.lean = 0; score.sfx('select'); return; }
+  const i = hitStep(e.clientX, e.clientY, e.pointerType === 'touch' ? 34 : 22);
+  if (i >= 0 && i < N) card.open(journey[i]);                 // the card plays 'select'
+  else if (i === N) { anchor = N; nav.lean = 0; score.sfx('select'); }
+  else if (cardOpen) card.close();                           // clicking empty sky backs out
+});
+cv.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  if (phase !== 'live') return;
+  const d = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+  anchor = clamp(anchor - d * 0.012, -1, N + 0.3);
+}, { passive: false });
+let closedAt = 0;
+addEventListener('keydown', (e) => {
+  if (phase !== 'live' || e.metaKey || e.ctrlKey) return;
+  const k = e.key;
+  if (k === 'Escape') {
+    // The card handles its own Esc first; a second Esc brings the camera home.
+    if (cardOpen || clock() - closedAt < 80) return;
+    hideTip();
+    if (Math.abs(cam.s - climber) > 1) { anchor = climber; nav.lean = 0; score.sfx('back'); }
+    return;
+  }
+  if (k === 'ArrowUp' || k === 'ArrowRight') anchor = clamp(Math.round(anchor) + 1, -1, N);
+  else if (k === 'ArrowDown' || k === 'ArrowLeft') anchor = clamp(Math.round(anchor) - 1, -1, N);
+  else if (k === 'PageUp') anchor = clamp(anchor + 10, -1, N);
+  else if (k === 'PageDown') anchor = clamp(anchor - 10, -1, N);
+  else if (k === 'Home') anchor = 0;
+  else if (k === 'End') anchor = N;
+  else if ((k === 'Enter' || k === ' ') && document.activeElement === document.body && !cardOpen) { if (climber < N) card.open(journey[climber]); }
+  else return;
+  nav.lean = 0; pointer.active = false;
+});
+
+// Screen-space hull of each visible step, refreshed every frame, for hover + click.
+const hulls = new Map();
+function pip(poly, x, y) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 2; i < poly.length; j = i, i += 2) {
+    const xi = poly[i], yi = poly[i + 1], xj = poly[j], yj = poly[j + 1];
+    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+let orbHit = null; // { x, y, r } of the climber orb on screen, refreshed per frame
+function hitStep(x, y, slop = 0) {
+  if (orbHit && phase === 'live' && Math.hypot(x - orbHit.x, y - orbHit.y) < orbHit.r) return climber;
+  for (const [i, poly] of hulls) if (pip(poly, x, y)) return i;
+  if (!slop) return -1;
+  // Forgive near-misses: snap to the closest step edge within reach.
+  let best = -1, bd = slop;
+  for (const [i, poly] of hulls) {
+    for (let k = 0, j = poly.length - 2; k < poly.length; j = k, k += 2) {
+      const ax = poly[j], ay = poly[j + 1], bx = poly[k], by = poly[k + 1];
+      const vx = bx - ax, vy = by - ay, l2 = vx * vx + vy * vy || 1;
+      const u = clamp(((x - ax) * vx + (y - ay) * vy) / l2, 0, 1);
+      const d = Math.hypot(x - (ax + vx * u), y - (ay + vy * u));
+      if (d < bd) { bd = d; best = i; }
+    }
+  }
+  return best;
+}
+
+function halfSpan() {
+  const dx = G.W * K, dy = G.H * K, len = Math.hypot(dx, dy), ux = dx / len, uy = dy / len;
+  const px = Math.min((VW * 0.5) / ux, (VH * 0.5) / uy);
+  return { ux, uy, px, steps: px / len };
+}
+
+// Camera intent from the pointer. Over a step, the camera holds still so the target never slides away;
+// out in the sky it leans toward the pointer; in the outer band along the stairs it travels that way.
+const nav = { lean: 0, zoom: 1, far: false };
+function updateNav(dt, now) {
+  const hs = halfSpan();
+  const usable = pointer.active && pointer.in && !pointer.down;
+  const frozen = cardOpen || now < focusLockUntil;
+  if (usable && pointer.onMeter) {
+    anchor = meterS(pointer.y); nav.lean = 0; nav.zoom = 0.92;
+  } else if (usable && !frozen) {
+    const vx = pointer.x - OX, vy = OY - pointer.y;
+    const along = vx * hs.ux + vy * hs.uy, perp = -vx * hs.uy + vy * hs.ux;
+    const u = clamp(along / hs.px, -1.2, 1.2);
+    const pn = Math.abs(perp) / (Math.min(VW, VH) * 0.5);
+    const EDGE = 0.6, inEdge = Math.abs(u) > EDGE;
+    if (hovered < 0 || inEdge) {
+      nav.lean = clamp(u, -EDGE, EDGE) * hs.steps * 0.32;
+      nav.zoom = lerp(1.1, 0.52, smooth(0.2, 0.95, pn));
+    }
+    if (inEdge) anchor = clamp(anchor + Math.sign(u) * Math.pow((Math.abs(u) - EDGE) / (1 - EDGE), 1.4) * 13 * dt, -1, N + 0.3);
+  } else if (!pointer.active && !pointer.down) {
+    // Pointer gone (left the window or keyboard in use): settle back to a neutral view.
+    const k = 1 - Math.exp(-dt * 3);
+    nav.lean += (0 - nav.lean) * k; nav.zoom += (1 - nav.zoom) * k;
+  }
+  if (!pointer.down && Math.abs(dragVel) > 0.01) {
+    anchor = clamp(anchor + dragVel * dt, -1, N + 0.3);
+    dragVel *= Math.exp(-dt * 4);
+  }
+  // The summit is magnetic: get close and the camera settles onto the platform, flag fully in frame.
+  if (anchor > N - 2.5 && !pointer.down) { anchor += (N - 0.2 - anchor) * (1 - Math.exp(-dt * 3)); if (anchor > N - 2) nav.lean *= Math.exp(-dt * 4); }
+  if (demo === 'overview') nav.zoom = 0.46;
+  if (demo === 'summit') nav.zoom = 0.9;
+  // Sound follows the camera's zoom mode, with hysteresis so it never chatters.
+  if (!nav.far && nav.zoom < 0.68) { nav.far = true; score.sfx('zoomOut'); }
+  else if (nav.far && nav.zoom > 0.9) { nav.far = false; score.sfx('zoomIn'); }
+  targetS = clamp(anchor + nav.lean, -1.2, N + 0.6);
+  targetZ = nav.zoom;
+}
+
+// ═══════════════════════ Intro choreography ═══════════════════════
+let phase = 'pre';
+const intro = { start: 0, fired: new Set(), L: 0, lastTick: 0 };
+const T_LIGHT = 0.7, T_ARRIVE = 7.8, T_FRONT = 8.5, T_LIVE = 9.6;
+const qT = parseFloat(params.get('t'));
+const demo = params.get('demo');
+const skipTo = Number.isFinite(qT) ? qT : (demo && demo !== 'intro' ? 99 : (reduceMotion ? T_LIVE : 0));
+const frontierOrder = () => journey.map((l, i) => (l.state === 'frontier' ? i : -1)).filter((i) => i >= 0);
+
+function startIntro() {
+  phase = 'intro';
+  intro.start = clock() - skipTo * 1000;
+  ffLeft = ffParam;
+  intro.silentUntil = skipTo;
+  score.setIntensity(0.1, 0.5);
+}
+function lightHead(T) {
+  if (T < T_LIGHT) return 0;
+  const u = clamp((T - T_LIGHT) / (T_ARRIVE - T_LIGHT), 0, 1);
+  return 1 + (climber - 1) * easeInOutCubic(u);
+}
+function once(key, T, at, fn) {
+  if (T < at || intro.fired.has(key)) return;
+  intro.fired.add(key);
+  fn(T - at > 0.25 || at < intro.silentUntil);
+}
+function updateIntro(T, now) {
+  const L = lightHead(T);
+  intro.L = L;
+  const c = climber;
+  // Camera pulls back as the climb speeds up, then pushes in for the arrival.
+  once('pullBack', T, T_LIGHT + 0.6, (silent) => { if (!silent) score.sfx('zoomOut'); });
+  once('pushIn', T, 5.6, (silent) => { if (!silent) score.sfx('zoomIn'); });
+  once('riser', T, T_ARRIVE - 2.4, (silent) => { if (!silent) score.sfx('riser'); });
+  once('arrive', T, T_ARRIVE, (silent) => {
+    const [x, y] = treadC(c);
+    if (!silent) {
+      score.sfx('intro'); score.setIntensity(0.95, 0.25);
+      burst(x, y + 50, 14, [C.sun, C.foam], 0.55);
+      rings.push({ x, y, t: 0, max: 1.1, c: C.sun });
+      caption(`${c} steps, all earned.`, 3400);
+    }
+    climberAppear = silent ? 1 : 0;
+  });
+  once('front', T, T_FRONT, (silent) => { if (!silent) score.sfx('unlock'); }); // the ready steps light up
+  once('live', T, T_LIVE, (silent) => {
+    phase = 'live'; anchor = c;
+    if (silent) { cam.s = targetS = c; cam.vs = 0; cam.z = targetZ = 1; cam.vz = 0; }
+    score.setIntensity(intensityFor(c), silent ? 0.2 : 3);
+    const quiet = silent && reduceMotion && !Number.isFinite(qT);
+    if (quiet) caption(`${c} steps, all earned.`, 3000);
+    setTimeout(showHint, quiet ? 3400 : silent ? 500 : 1900);
+    afterIntro();
+  });
+
+  // Steps light as the climber passes them.
+  for (let i = 0; i < c; i++) {
+    const on = i < L;
+    if (on && V[i].litT === 0) {
+      V[i].litT = 1;
+      if (T < intro.silentUntil) { V[i].lit = 1; continue; }
+      V[i].flash = 0.9; V[i].flashC = C.foam;
+      // One footstep per step the climber lands on (thinned out when it's sprinting).
+      if (now - intro.lastTick > 95) { score.sfx('step'); intro.lastTick = now; }
+    }
+  }
+  const fo = frontierOrder();
+  fo.forEach((i, j) => {
+    if (T >= T_FRONT + j * 0.055 && V[i].litT === 0) {
+      V[i].litT = 1;
+      if (T < intro.silentUntil) V[i].lit = 1; else { V[i].flash = 0.7; V[i].flashC = C.foam; }
+    }
+  });
+  if (!intro.fired.has('arrive')) score.setIntensity(0.1 + 0.75 * smooth(T_LIGHT, T_ARRIVE, T), 0.6);
+
+  // Camera rides just behind the climber, pulling back as it speeds up.
+  const orb = Math.max(0, L - 1);
+  targetS = T < T_ARRIVE ? orb + 0.6 : c;
+  const zIn = lerp(1.3, 0.74, smooth(T_LIGHT, 4.2, T));
+  targetZ = T < 5.6 ? zIn : lerp(0.74, 1, smooth(5.6, T_ARRIVE + 0.6, T));
+  // HUD day counter.
+  const li = Math.min(c - 1, Math.max(0, Math.floor(L) - 1));
+  if (!intro.fired.has('arrive')) setDay(L < 1 ? 1 : dayOf(journey[li]), L < 1 ? journey[0].masteredAt : journey[li].masteredAt, Math.max(0, Math.floor(L)));
+  else setDay(stats.days, null, c, true);
+  meterScore = scoreAtS(intro.fired.has('arrive') ? c : orb, c, stats.score);
+}
+let climberAppear = 0;
+
+// One hint, once: it leaves on the first pointer move (or after ~4s) and never returns.
+const hintEl = document.getElementById('hint');
+let hintState = 'unseen', hintAt = 0;
+function showHint() {
+  if (hintState !== 'unseen' || cardOpen) return;
+  hintState = 'showing'; hintAt = clock();
+  hintEl.textContent = VW < 640 ? 'Drag to explore. Tap the glowing step.' : 'Point up the stairs to look ahead. Click the glowing step.';
+  hintEl.classList.add('show');
+  setTimeout(hideHint, 4200);
+}
+function hideHint() { if (hintState !== 'showing') return; hintState = 'done'; hintEl.classList.remove('show'); }
+
+// ═══════════════════════ HUD ═══════════════════════
+const dayNum = document.getElementById('dayNum'), hudSub = document.getElementById('hudSub');
+let lastDayKey = '';
+function setDay(day, _date, steps) {
+  const key = `${day}|${steps}`;
+  if (key === lastDayKey) return; lastDayKey = key;
+  dayNum.textContent = `Day ${day}`;
+  hudSub.textContent = `${steps} of ${N} steps`;
+}
+setDay(1, journey[0].masteredAt, 0);
+
+// ═══════════════════════ Next-step invite + return pill ═══════════════════════
+const nextPill = document.getElementById('nextPill'), nextLabel = document.getElementById('nextLabel');
+const homePill = document.getElementById('homePill');
+let nextShown = false;
+nextPill.addEventListener('click', () => { if (climber < N) card.open(journey[climber]); });
+homePill.addEventListener('click', () => { anchor = climber; nav.lean = 0; score.sfx('back'); pointer.active = false; });
+function afterIntro() {
+  nextShown = climber < N;
+  if (nextShown) nextLabel.textContent = journey[climber].label;
+}
+
+// ═══════════════════════ Tooltip ═══════════════════════
+const tip = document.getElementById('tip');
+let tipFor = -2;
+function hideTip() { tip.classList.remove('show'); tipFor = -2; }
+function showTip(i, sx, sy, sy2) {
+  if (tipFor !== i) {
+    tipFor = i;
+    if (i === N) {
+      tip.innerHTML = `<div class="dom"><i style="background:var(--sun-shadow)"></i>Your goal</div><div class="t">Summit · ${GOAL}</div><div class="m">${N - climber} steps above you</div>`;
+    } else {
+      const l = journey[i], hue = DOMAIN_HUES[l.domain.label];
+      let meta;
+      if (l.state === 'mastered') meta = `Climbed on day ${dayOf(l)}`;
+      else if (l.state === 'frontier') meta = l.progress > 0 ? `${Math.round(l.progress * 100)}% done. Click to continue.` : 'Ready. Click to start.';
+      else meta = graph.blockerText(l);
+      tip.innerHTML = `<div class="dom"><i style="background:${hue}"></i>${l.domain.label}</div><div class="t">${l.label}</div><div class="m">${meta}</div>`;
+    }
+  }
+  const w = tip.offsetWidth, h = tip.offsetHeight;
+  const { x, y } = placeBox(w, h, sx, sy, sy2);
+  tip.style.left = Math.round(x) + 'px'; tip.style.top = Math.round(y) + 'px';
+  tip.classList.add('show');
+}
+
+// Overlay placement: above the anchor, else below it, never over the status, the meter or the dock.
+let hudRect = null;
+function keepOut() {
+  if (!hudRect) { const r = document.querySelector('.hud').getBoundingClientRect(); hudRect = { x: 0, y: 0, w: r.right + 16, h: r.bottom + 16 }; }
+  return [hudRect];
+}
+function placeBox(w, h, ax, top, bottom) {
+  const m = meterBox();
+  const minX = m.x + (m.phone ? 64 : 104), maxX = VW - 16 - w;
+  const x = clamp(ax - w / 2, Math.min(minX, maxX), maxX);
+  const zones = keepOut();
+  const fits = (y) => y >= 16 && y + h <= VH - 76 && !zones.some((z) => x < z.x + z.w && x + w > z.x && y < z.y + z.h && y + h > z.y);
+  const up = top - 12 - h, down = bottom + 12;
+  if (fits(up)) return { x, y: up, below: false };
+  if (fits(down)) return { x, y: down, below: true };
+  return { x, y: clamp(up, 16, VH - 76 - h), below: false };
+}
+// Screen anchor of a step: its centre x plus the top of everything standing on it, and its bottom.
+function stepAnchor(i) {
+  if (i === N) {
+    const [bx, by] = P(xs[N] + ws[N] * 0.55 + G.DX * 0.5, tops[N] + G.DY * 0.5);
+    return { x: bx + 60 * K, top: by - 250 * K, bottom: by + 40 };
+  }
+  const poly = hulls.get(i);
+  let top = Infinity, bottom = -Infinity, sx = 0;
+  for (let k = 0; k < poly.length; k += 2) { top = Math.min(top, poly[k + 1]); bottom = Math.max(bottom, poly[k + 1]); sx += poly[k]; }
+  sx /= poly.length / 2;
+  if (LANDINGS.has(i)) top -= 200 * K;
+  else if (domainEnds.has(i)) top -= 120 * K;
+  if (i === climber && orbHit) top = Math.min(top, orbHit.y - orbHit.r);
+  return { x: sx, top, bottom };
+}
+
+// ═══════════════════════ Lesson completion ═══════════════════════
+let hop = null;
+function celebrate(evt) {
+  const prev = climber, gained = evt.stats.score - stats.score;
+  journey = graph.journey();
+  stats = evt.stats;
+  climber = climberIndex();
+  lockStart = firstLocked();
+  domainEnds = domainEnd();
+  const now = clock();
+  const at = journey.indexOf(evt.lesson);
+  if (at >= 0) {
+    V[at].flash = 1.1; V[at].flashC = C.foam; V[at].lit = 1; V[at].litT = 1;
+    const [x, y] = treadC(at);
+    const hue = HUE[evt.lesson.domain.label];
+    burst(x, y + 30, reduceMotion ? 0 : 16, [hue, C.sun, C.foam], 0.6);
+    rings.push({ x, y, t: 0, max: 1.1, c: hue });
+  }
+  hop = { from: prev, to: climber, t0: now + 250, dur: reduceMotion ? 1 : 850 };
+  // Newly opened steps come out of the clouds just after the climber lands.
+  const unlockAt = hop.t0 + hop.dur + 200;
+  const idx = evt.unlocked.map((l) => journey.indexOf(l)).filter((i) => i >= 0);
+  for (const i of idx) V[i].hold = unlockAt;
+  pendingUnlock = idx.length ? { at: unlockAt, idx } : null;
+  for (let i = 0; i < N; i++) if (journey[i].state !== 'locked' && !idx.includes(i)) { V[i].lit = Math.max(V[i].lit, 0.999); V[i].litT = 1; }
+  anchor = climber; focusLockUntil = now + 2200;
+  meterScoreTarget = stats.score;
+  score.setIntensity(1, 0.2);
+  setTimeout(() => score.setIntensity(intensityFor(cam.s), 3), 1800);
+  setDay(stats.days, null, climber, true);
+  nextShown = false;
+  const line = climber >= N ? 'Summit reached.' : gained > 0 ? `${evt.lesson.label}, done. Score now ${stats.score}.` : `${evt.lesson.label}, done. ${N - climber} steps to go.`;
+  // On narrow screens the card covers the caption line, so it waits until the card is closed.
+  if (VW < 640 && cardOpen) heldCaption = { line, at: clock() }; else caption(line, 3200);
+  setTimeout(afterIntro, 1900);
+}
+let meterScoreTarget = stats.score;
+let pendingUnlock = null, heldCaption = null;
+
+// ═══════════════════════ Ambient narration by altitude ═══════════════════════
+let zone = '', zoneAt = 0, lastIntensity = -1;
+const intensityFor = (s) => clamp(0.2 + 0.72 * Math.pow(clamp(s / N, 0, 1), 1.1), 0, 1);
+function updateZone(now) {
+  const s = cam.s;
+  const z = s > N - 4 ? 'summit' : s > lockStart + 2 ? 'clouds' : s < 4 ? 'base' : 'mid';
+  if (z !== zone) {
+    const prevZone = zone; zone = z;
+    if (prevZone) zoneAt = now;
+  }
+  const it = intensityFor(s);
+  if (Math.abs(it - lastIntensity) > 0.025 && !hop) { lastIntensity = it; score.setIntensity(it, 2); }
+}
+
+// ═══════════════════════ Drawing: sky, sea, clouds ═══════════════════════
+function drawSky(t) {
+  screenT();
+  const g = ctx.createLinearGradient(0, 0, 0, VH);
+  for (let j = 0; j <= 6; j++) g.addColorStop(j / 6, rgba(skyAtY((VH * j) / 6)));
+  ctx.fillStyle = g; ctx.fillRect(0, 0, VW, VH);
+  const camF = cam.y / SUMMIT_Y;
+  const dayness = 1 - smooth(0.22, 0.6, camF);
+  const nightness = smooth(0.62, 0.9, camF);
+  const sx = VW * 0.2, sy = VH * (0.18 + 0.5 * smooth(0.05, 0.55, camF));
+  if (dayness > 0.01) {
+    // Soft daylight from the sun.
+    const R0 = Math.max(VW, VH) * 0.6;
+    const sg = ctx.createRadialGradient(sx, sy, 0, sx, sy, R0);
+    sg.addColorStop(0, rgba(C.foam, 0.24 * dayness)); sg.addColorStop(1, rgba(C.foam, 0));
+    ctx.fillStyle = sg; ctx.fillRect(0, 0, VW, VH);
+    const disk = 1 - smooth(0.12, 0.34, camF);
+    if (disk > 0.01) {
+      const dg = ctx.createRadialGradient(sx, sy, 0, sx, sy, 40);
+      dg.addColorStop(0, rgba(C.foam, disk)); dg.addColorStop(0.7, rgba(mixc(C.foam, C.sun, 0.35), disk)); dg.addColorStop(1, rgba(C.sun, 0));
+      ctx.fillStyle = dg; ctx.beginPath(); ctx.arc(sx, sy, 40, 0, TAU); ctx.fill();
+    }
+  }
+  // Stars where the sky is dark enough: crisp points, gently twinkling.
+  if (camF > 0.4) {
+    for (const st of stars) {
+      const y = ((st.y * VH * 1.4 + cam.y * K * 0.03) % (VH * 1.4)) - VH * 0.2;
+      const x = ((st.x * VW - cam.x * K * 0.01) % VW + VW) % VW;
+      const a = smooth(0.56, 0.84, altAtY(y) / SUMMIT_Y) * (reduceMotion ? 0.8 : 0.65 + 0.35 * Math.sin(t * st.sp + st.tw));
+      if (a < 0.03) continue;
+      const r = st.r > 1.6 ? 2 : 1;
+      ctx.fillStyle = rgba(C.foam, a); ctx.fillRect(Math.round(x), Math.round(y), r, r);
+    }
+  }
+  // Moon takes over from the sun.
+  if (nightness > 0.01) {
+    const mx = VW * 0.17, my = VH * 0.2;
+    const mg = ctx.createRadialGradient(mx, my, 24, mx, my, 90);
+    mg.addColorStop(0, rgba(C.foam, 0.12 * nightness)); mg.addColorStop(1, rgba(C.foam, 0));
+    ctx.fillStyle = mg; ctx.beginPath(); ctx.arc(mx, my, 90, 0, TAU); ctx.fill();
+    ctx.save(); ctx.beginPath(); ctx.arc(mx, my, 30, 0, TAU); ctx.clip();
+    ctx.beginPath(); ctx.rect(mx - 40, my - 40, 80, 80); ctx.arc(mx + 13, my - 9, 26, 0, TAU, true);
+    ctx.fillStyle = rgba(C.foam, 0.95 * nightness); ctx.fill(); ctx.restore();
+  }
+}
+
+const SEA_Y = -14;
+const SEA_BANDS = [[0.16, C.w1], [0.26, mixc(C.w1, C.w2, 0.5)], [0.4, C.w2], [0.58, mixc(C.w2, C.w3, 0.5)], [0.8, C.w3]];
+function seaBand(p, col, t, crest = true) {
+  const y0 = OY - (SEA_Y - cam.y) * K * p;
+  if (y0 > VH + 20) return;
+  const amp = 5 + 9 * p, wl = 140 + 220 * p, ph = t * (0.5 + p * 0.8) + p * 9;
+  ctx.beginPath(); ctx.moveTo(0, VH);
+  for (let x = 0; x <= VW + 24; x += 24) {
+    const wx = x + cam.x * K * p;
+    ctx.lineTo(x, y0 + Math.sin(wx / wl + ph) * amp + Math.sin(wx / (wl * 0.43) - ph * 1.3) * amp * 0.35);
+  }
+  ctx.lineTo(VW, VH); ctx.closePath();
+  ctx.fillStyle = rgba(col); ctx.fill();
+  if (crest) {
+    ctx.beginPath();
+    for (let x = 0; x <= VW + 24; x += 24) {
+      const wx = x + cam.x * K * p;
+      const y = y0 + Math.sin(wx / wl + ph) * amp + Math.sin(wx / (wl * 0.43) - ph * 1.3) * amp * 0.35;
+      x === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+    ctx.strokeStyle = rgba(C.foam, 0.55); ctx.lineWidth = 1.5 + p * 2; ctx.stroke();
+  }
+}
+const seaAlpha = () => 1 - smooth(0.1, 0.3, cam.y / SUMMIT_Y);
+function drawSeaBack(t) {
+  screenT();
+  const a = seaAlpha();
+  if (a < 0.01 || OY - (SEA_Y - cam.y) * K * 0.16 > VH + 10) return;
+  ctx.globalAlpha = a;
+  for (const [p, c] of SEA_BANDS) seaBand(p, c, t);
+  ctx.globalAlpha = 1;
+}
+function drawSeaFront(t) {
+  screenT();
+  seaBand(1, C.w3, t);
+  seaBand(1.22, C.wShadow, t);
+}
+
+function drawClouds(filter, t) {
+  screenT();
+  for (const c of clouds) {
+    if (!filter(c)) continue;
+    const [bx, by] = stairPoint(c.s);
+    const wx = bx + c.ox * G.W + (reduceMotion ? 0 : Math.sin(t * 0.05 + c.s) * c.dr * 6 + t * c.dr), wy = by + c.oy;
+    const [sx, sy] = PP(wx, wy, c.p);
+    const sp = SPRITES[c.blur][c.k];
+    const w = sp.day.c.width * c.sc * K * c.p, h = sp.day.c.height * c.sc * K * c.p;
+    if (sx + w / 2 < -40 || sx - w / 2 > VW + 40 || sy + h / 2 < -40 || sy - h / 2 > VH + 40) continue;
+    const f = wy / SUMMIT_Y, n = smooth(0.5, 0.78, f);
+    let a = c.a;
+    if (c.fg) a *= 1 - 0.75 * smooth(4.5, 0.8, Math.abs(c.s - climber)) * (c.sea ? 0 : 1);
+    if (c.sea) a *= 0.35 + 0.65 * smooth(lockStart - 2, lockStart + 3, c.s);
+    if (a < 0.02) continue;
+    if (n < 0.98) { ctx.globalAlpha = a * (1 - n); ctx.drawImage(sp.day.c, sx - w / 2, sy - h * 0.6, w, h); }
+    if (n > 0.02) { ctx.globalAlpha = a * n; ctx.drawImage(sp.night.c, sx - w / 2, sy - h * 0.6, w, h); }
+  }
+  ctx.globalAlpha = 1;
+}
+
+// ═══════════════════════ Drawing: the staircase ═══════════════════════
+const pal = {};
+function visibleRange() {
+  let lo = N, hi = 0;
+  for (let i = 0; i <= N; i++) {
+    const [x1, y1] = P(xs[i] + G.DX, tops[i] + G.DY), [x2, y2] = P(xs[i] + ws[i], tops[i] - G.H - G.THICK - 160);
+    if (x2 < -60 || x1 > VW + 60 || y1 > VH + 60 || y2 < -260) continue;
+    lo = Math.min(lo, i); hi = Math.max(hi, i);
+  }
+  return [lo, hi];
+}
+function quad(a, b, c, d, e, f, g, h) { ctx.beginPath(); ctx.moveTo(a, b); ctx.lineTo(c, d); ctx.lineTo(e, f); ctx.lineTo(g, h); ctx.closePath(); }
+
+function drawStep(i, t) {
+  const p = stepPal(i, pal);
+  const lift = V[i].lift * 12;
+  const x0 = xs[i], w = ws[i], top = tops[i] + lift;
+  const bl = tops[i] - G.H - G.THICK + lift, br = tops[i] - G.THICK + lift;
+  const rb = i === 0 ? bl : top - G.H;
+  const { DX, DY } = G;
+  // Riser (left face, lit by the sun).
+  const rg = ctx.createLinearGradient(0, rb, 0, top + DY);
+  rg.addColorStop(0, rgba(mixc(p.riser, C.ink, 0.14))); rg.addColorStop(1, rgba(mixc(p.riser, C.foam, 0.08)));
+  ctx.fillStyle = rg; quad(x0, rb, x0, top, x0 + DX, top + DY, x0 + DX, rb + DY); ctx.fill();
+  // Tread (top).
+  const tg = ctx.createLinearGradient(x0, top, x0 + DX * 0.3, top + DY);
+  tg.addColorStop(0, rgba(mixc(p.tread, C.foam, 0.35))); tg.addColorStop(1, rgba(mixc(p.tread, C.ink, 0.05)));
+  ctx.fillStyle = tg; quad(x0, top, x0 + w, top, x0 + w + DX, top + DY, x0 + DX, top + DY); ctx.fill();
+  if (i < N && !LANDINGS.has(i)) { // contact shadow where the next riser rises
+    const ag = ctx.createLinearGradient(x0 + w - 46, 0, x0 + w, 0);
+    ag.addColorStop(0, rgba(C.ink, 0)); ag.addColorStop(1, rgba(C.ink, 0.1));
+    ctx.fillStyle = ag; quad(x0 + w - 46, top, x0 + w, top, x0 + w + DX, top + DY, x0 + w - 46 + DX, top + DY); ctx.fill();
+  }
+  // Front face.
+  const fg = ctx.createLinearGradient(0, top, 0, Math.min(bl, br) - 20);
+  fg.addColorStop(0, rgba(p.fTop)); fg.addColorStop(1, rgba(p.fBot));
+  ctx.fillStyle = fg; quad(x0, top, x0 + w, top, x0 + w, br, x0, bl); ctx.fill();
+  // Hue lip + crisp edge.
+  ctx.fillStyle = rgba(p.lip); quad(x0, top, x0 + w, top, x0 + w, top - 11, x0, top - 11); ctx.fill();
+  ctx.strokeStyle = rgba(C.foam, 0.85); ctx.lineWidth = 2 / K;
+  ctx.beginPath(); ctx.moveTo(x0, top); ctx.lineTo(x0 + w, top); ctx.stroke();
+  ctx.strokeStyle = rgba(C.ink, 0.1); ctx.lineWidth = 1.2 / K;
+  ctx.beginPath(); ctx.moveTo(x0, top - 11); ctx.lineTo(x0, bl); ctx.stroke();
+  // Crisp underside edge instead of a haze.
+  ctx.strokeStyle = rgba(mixc(p.fBot, C.ink, 0.35)); ctx.lineWidth = 1.5 / K;
+  ctx.beginPath(); ctx.moveTo(x0, bl); ctx.lineTo(x0 + w, br); ctx.stroke();
+  // Hover: a clean outline round the tread, at full strength from the first frame.
+  if (i === hovered) {
+    ctx.strokeStyle = rgba(V[i].f > 0.5 ? C.sunShadow : C.foam); ctx.lineWidth = 2.5 / K; ctx.lineJoin = 'round';
+    quad(x0, top, x0 + w, top, x0 + w + DX, top + DY, x0 + DX, top + DY); ctx.stroke();
+  }
+  // Hull for hit testing (screen space, unlifted).
+  const pts = [[x0 + DX, rb + DY], [x0, rb], [x0, bl], [x0 + w, br], [x0 + w, top], [x0 + w + DX, top + DY], [x0 + DX, top + DY]];
+  const poly = []; for (const [a, b] of pts) { const [sx, sy] = P(a, b - lift); poly.push(sx, sy); }
+  hulls.set(i, poly);
+}
+
+// The only pulse on screen: ready steps breathe, in a slow wave up from the climber.
+function frontierShimmer(lo, hi, t) {
+  for (let i = lo; i <= Math.min(hi, N - 1); i++) {
+    const v = V[i], amt = v.f * v.lit;
+    if (amt < 0.02 || reduceMotion) continue;
+    const pulse = 0.5 + 0.5 * Math.sin(t * 2.2 - (i - climber) * 0.5);
+    const x0 = xs[i], w = ws[i], top = tops[i] + V[i].lift * 12;
+    ctx.fillStyle = rgba(C.foam, (i === climber ? 0.3 : 0.16) * pulse * amt);
+    quad(x0, top, x0 + w, top, x0 + w + G.DX, top + G.DY, x0 + G.DX, top + G.DY); ctx.fill();
+  }
+}
+
+function drawFlag(px, py, poleH, clothW, clothH, color, edge, label, t, labelColor, big = false) {
+  // px, py: pole base in screen space.
+  const top = py - poleH;
+  ctx.strokeStyle = rgba(mixc(C.ink, C.muted, 0.3)); ctx.lineWidth = Math.max(1.5, 3.2 * K * (big ? 1.4 : 1)); ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px, top); ctx.stroke();
+  ctx.fillStyle = rgba(color);
+  ctx.beginPath(); ctx.arc(px, top, Math.max(2, 4.5 * K * (big ? 1.5 : 1)), 0, TAU); ctx.fill();
+  const segs = 10;
+  ctx.beginPath(); ctx.moveTo(px, top + 3);
+  for (let k = 0; k <= segs; k++) { const u = k / segs; ctx.lineTo(px + u * clothW, top + 3 + Math.sin(t * 3.2 - u * 3.5) * u * clothH * 0.12); }
+  for (let k = segs; k >= 0; k--) { const u = k / segs; ctx.lineTo(px + u * clothW, top + 3 + clothH + Math.sin(t * 3.2 - u * 3.5) * u * clothH * 0.12 - u * clothH * 0.06); }
+  ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = rgba(edge); ctx.lineWidth = Math.max(1, 2 * K); ctx.stroke();
+  if (label && clothH > 13) {
+    ctx.fillStyle = rgba(labelColor); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.font = `${Math.round(clothH * 0.46)}px ${HEAD}`;
+    ctx.fillText(label, px + clothW * 0.5, top + 3 + clothH * 0.5 + Math.sin(t * 3.2 - 1.75) * 0.5 * clothH * 0.12);
+  }
+}
+
+function drawMarkers(lo, hi, t) {
+  screenT();
+  // Milestone landings.
+  for (const [i, label] of LANDINGS) {
+    if (i < lo - 2 || i > hi + 2) continue;
+    const reached = i < climber;
+    const [px, py] = P(xs[i] + ws[i] * 0.78 + G.DX * 0.62, tops[i] + G.DY * 0.62 + V[i].lift * 12);
+    const a = i >= lockStart ? 1 - 0.55 * fogAt(i) : 1;
+    ctx.globalAlpha = a;
+    drawFlag(px, py, 190 * K, 104 * K, 60 * K, reached ? C.foam : C.mist, reached ? C.w3 : C.cloud, label, t, reached ? C.wShadow : C.muted);
+    ctx.globalAlpha = 1;
+  }
+  // Pennants where a domain gets finished.
+  for (const [i, dom] of domainEnds) {
+    if (i < lo || i > hi || i === climber) continue;
+    const [px, py] = P(xs[i] + ws[i] * 0.3 + G.DX * 0.75, tops[i] + G.DY * 0.75 + V[i].lift * 12);
+    ctx.globalAlpha = i >= lockStart ? 1 - 0.5 * fogAt(i) : 1;
+    const h = HUE[dom];
+    ctx.strokeStyle = rgba(mixc(C.ink, C.muted, 0.3)); ctx.lineWidth = Math.max(1.2, 2.4 * K);
+    ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px, py - 110 * K); ctx.stroke();
+    ctx.fillStyle = rgba(h);
+    ctx.beginPath(); ctx.moveTo(px, py - 110 * K); ctx.lineTo(px + 56 * K, py - (96 + Math.sin(t * 3 + i) * 3) * K); ctx.lineTo(px, py - 80 * K); ctx.closePath(); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+  // Summit + goal flag.
+  if (hi >= N - 3) {
+    const [bx, by] = P(xs[N] + ws[N] * 0.55 + G.DX * 0.5, tops[N] + G.DY * 0.5);
+    const pole = 250 * K;
+    drawFlag(bx, by, pole, 190 * K, 112 * K, C.sun, C.sunShadow, String(GOAL), t, C.ink, true);
+  }
+  // Day 1 marker at sea level.
+  if (lo <= 2) {
+    const [px, py] = P(xs[0] + G.DX - 40, tops[0] + 40);
+    ctx.textAlign = 'right'; ctx.textBaseline = 'alphabetic';
+    ctx.fillStyle = rgba(C.ink, 0.85);
+    ctx.font = `${Math.max(16, Math.round(34 * K))}px ${HEAD}`;
+    ctx.fillText('Day 1', px, py);
+  }
+}
+
+function drawStepNumbers(lo, hi) {
+  screenT();
+  const px = G.W * K;
+  if (px < 58) return;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.font = `${Math.round(clamp(px * 0.17, 11, 20))}px ${HEAD}`;
+  for (const i of new Set([hovered, phase === 'live' ? climber : -1])) {
+    if (i < lo || i > Math.min(hi, N - 1)) continue;
+    const v = V[i];
+    const [sx, sy] = P(xs[i] + ws[i] / 2, tops[i] - 11 - (G.H + G.THICK - 11) * 0.36 + v.lift * 12);
+    const a = 0.6;
+    ctx.fillStyle = rgba(v.f > 0.5 ? mixc(C.ink, C.sunShadow, 0.35) : C.ink, a);
+    ctx.fillText(String(i + 1), sx, sy);
+  }
+}
+
+// ═══════════════════════ The climber ═══════════════════════
+function climberWorld(now, t) {
+  let s = climber, hopY = 0, squash = 0;
+  if (phase === 'intro' && !intro.fired.has('arrive')) {
+    const L = intro.L, orb = Math.max(0, L - 1);
+    s = orb; hopY = Math.abs(Math.sin(Math.PI * (orb % 1))) * 44;
+  } else if (hop) {
+    const u = clamp((now - hop.t0) / hop.dur, 0, 1);
+    const e = u < 0 ? 0 : 1 - Math.pow(1 - u, 3);
+    s = lerp(hop.from, hop.to, e); hopY = Math.sin(Math.PI * u) * 120;
+    squash = u > 0.85 ? Math.sin((u - 0.85) / 0.15 * Math.PI) : 0;
+  }
+  const i = Math.floor(clamp(s, 0, N)), f = s - i;
+  const a = treadC(i), b = treadC(Math.min(N, i + 1));
+  const x = lerp(a[0], b[0], f), y = lerp(a[1], b[1], f);
+  const bob = reduceMotion ? 0 : Math.sin(t * 2.2) * 6;
+  return { x, y, hover: 44 + hopY + bob, squash, s };
+}
+function drawClimber(now, t, dt) {
+  const visible = phase === 'live' || (phase === 'intro' && (intro.L > 0 || intro.fired.has('arrive')));
+  if (!visible) return;
+  const c = climberWorld(now, t);
+  const growing = phase === 'intro' && !intro.fired.has('arrive');
+  const scale = growing ? 0.62 : lerp(0.62, 1, climberAppear) + (1 - climberAppear) * Math.sin(climberAppear * Math.PI) * 0.6;
+  const cx = c.x, cy = c.y + c.hover * 1;
+  worldT();
+  // Light pool on the tread.
+  ctx.save(); ctx.translate(c.x, c.y); ctx.scale(1, 0.42);
+  const pg = ctx.createRadialGradient(0, 0, 0, 0, 0, G.W * 0.55 * scale);
+  pg.addColorStop(0, rgba(C.foam, 0.6)); pg.addColorStop(1, rgba(C.foam, 0));
+  ctx.fillStyle = pg; ctx.beginPath(); ctx.arc(0, 0, G.W * 0.55 * scale, 0, TAU); ctx.fill();
+  ctx.restore();
+  // Motion trail: only while the climber is actually moving.
+  if (!reduceMotion && (growing || hop) && Math.random() < 0.7) {
+    trail.push({ x: cx + (Math.random() - 0.5) * 14, y: cy + (Math.random() - 0.5) * 14, vx: -G.W * 0.28 - Math.random() * 30, vy: -G.H * 0.18 + Math.random() * 30, life: 0, max: 0.9 + Math.random() * 0.9, r: (5 + Math.random() * 6) * scale });
+  }
+  ctx.globalCompositeOperation = 'lighter';
+  for (const p of trail) {
+    const u = p.life / p.max;
+    ctx.fillStyle = rgba(u < 0.4 ? C.sun : C.foam, 0.5 * (1 - u));
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.r * (1 - u * 0.8), 0, TAU); ctx.fill();
+  }
+  // A tight halo: it reads as a light source without fogging the steps.
+  const hr = 64 * scale;
+  const hg = ctx.createRadialGradient(cx, cy, 18 * scale, cx, cy, hr);
+  hg.addColorStop(0, rgba(C.sun, 0.38)); hg.addColorStop(1, rgba(C.sun, 0));
+  ctx.fillStyle = hg; ctx.beginPath(); ctx.arc(cx, cy, hr, 0, TAU); ctx.fill();
+  ctx.globalCompositeOperation = 'source-over';
+  // Core.
+  const sx = 1 + c.squash * 0.25, sy = 1 - c.squash * 0.25;
+  ctx.save(); ctx.translate(cx, cy); ctx.scale(sx, sy);
+  const r = 21 * scale;
+  const cg = ctx.createRadialGradient(-r * 0.3, r * 0.35, 0, 0, 0, r);
+  cg.addColorStop(0, rgba(C.foam)); cg.addColorStop(0.45, rgba(mixc(C.sun, C.foam, 0.35))); cg.addColorStop(1, rgba(C.sunShadow));
+  ctx.fillStyle = cg; ctx.beginPath(); ctx.arc(0, 0, r, 0, TAU); ctx.fill();
+  ctx.strokeStyle = rgba(C.foam); ctx.lineWidth = 2.5 / K; ctx.stroke();
+  ctx.restore();
+  const [ox, oy] = P(cx, cy);
+  orbHit = { x: ox, y: oy, r: Math.max(28, 40 * K * scale) };
+  return c;
+}
+
+function tickSim(dt) {
+  for (let k = parts.length - 1; k >= 0; k--) {
+    const p = parts[k];
+    p.life += dt; if (p.life > p.max) { parts.splice(k, 1); continue; }
+    p.vy += p.g * dt; p.vx *= Math.exp(-dt * 1.2); p.x += p.vx * dt; p.y += p.vy * dt; p.rot += p.vr * dt;
+  }
+  for (let k = rings.length - 1; k >= 0; k--) { const r = rings[k]; r.t += dt; if (r.t > r.max) rings.splice(k, 1); }
+  for (let k = trail.length - 1; k >= 0; k--) { const p = trail[k]; p.life += dt; p.x += p.vx * dt; p.y += p.vy * dt; if (p.life > p.max) trail.splice(k, 1); }
+}
+function drawParticles() {
+  worldT();
+  for (const p of parts) {
+    const u = p.life / p.max;
+    ctx.globalAlpha = 1 - u * u;
+    ctx.fillStyle = rgba(p.c);
+    if (p.kind === 'sq') { ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.rot); ctx.fillRect(-p.size / 2, -p.size / 3, p.size, p.size * 0.66); ctx.restore(); }
+    else { ctx.beginPath(); ctx.arc(p.x, p.y, p.size * 0.4, 0, TAU); ctx.fill(); }
+  }
+  ctx.globalAlpha = 1;
+  for (const r of rings) {
+    if (r.t < 0) continue;
+    const u = r.t / r.max; if (u >= 1) continue;
+    ctx.save(); ctx.translate(r.x, r.y); ctx.scale(1, 0.45);
+    ctx.strokeStyle = rgba(r.c, 0.9 * (1 - u)); ctx.lineWidth = (10 * (1 - u) + 2) / K * 1.6;
+    ctx.beginPath(); ctx.arc(0, 0, 30 + u * G.W * 2.2, 0, TAU); ctx.stroke();
+    ctx.restore();
+  }
+  screenT();
+  ctx.globalAlpha = 1;
+}
+
+// ═══════════════════════ The altitude meter ═══════════════════════
+function rr(x, y, w, h, r) { ctx.beginPath(); ctx.roundRect(x, y, w, h, r); }
+function drawMeter(t, hs) {
+  screenT();
+  const m = meterBox();
+  const dark = lum(skyAtY((m.top + m.bot) / 2)) < 0.5;
+  const fg = dark ? C.foam : C.ink;
+  const cx = m.x + m.w / 2;
+  ctx.save();
+  // The rail: a thin line, climbed part filled in.
+  const shownC = phase === 'pre' ? 0 : phase === 'intro' && !intro.fired.has('arrive') ? Math.max(0, intro.L - 1) : (hop ? climberWorld(clock(), t).s : climber);
+  const yc = meterY(shownC, m);
+  ctx.lineCap = 'round';
+  // A faint ink edge keeps the rail readable over both sky and white stone.
+  ctx.strokeStyle = rgba(C.nightInk, 0.22); ctx.lineWidth = 5;
+  ctx.beginPath(); ctx.moveTo(cx, m.top); ctx.lineTo(cx, m.bot); ctx.stroke();
+  ctx.strokeStyle = rgba(C.foam, 0.45); ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(cx, m.top); ctx.lineTo(cx, m.bot); ctx.stroke();
+  ctx.strokeStyle = rgba(C.foam, 0.95);
+  ctx.beginPath(); ctx.moveTo(cx, yc); ctx.lineTo(cx, m.bot); ctx.stroke();
+  // Two labels only: where you started, where you're going.
+  ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.lineJoin = 'round';
+  const label2 = (text, y, font) => {
+    ctx.font = font; ctx.lineWidth = 3; ctx.strokeStyle = rgba(C.nightInk, 0.3); ctx.strokeText(text, cx + 10, y);
+    ctx.fillStyle = rgba(C.foam); ctx.fillText(text, cx + 10, y);
+  };
+  if (Math.abs(yc - m.bot) > 26) label2(String(FLOOR), m.bot, `700 13px ${BODY}`);
+  if (Math.abs(yc - m.top) > 30) label2(`Goal ${GOAL}`, m.top, `800 13px ${BODY}`);
+  ctx.fillStyle = rgba(C.sun); ctx.beginPath(); ctx.arc(cx, m.top, 4, 0, TAU); ctx.fill();
+  ctx.restore();
+  // While scrubbing: the bracket of what's on screen, and the score under the pointer.
+  if (pointer.onMeter && pointer.active && phase === 'live') {
+    const y1 = meterY(cam.s + hs.steps * 0.95, m), y2 = meterY(cam.s - hs.steps * 0.95, m);
+    ctx.strokeStyle = rgba(fg, 0.5); ctx.lineWidth = 2; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(cx - 4, y1); ctx.lineTo(cx - 7, y1); ctx.lineTo(cx - 7, y2); ctx.lineTo(cx - 4, y2); ctx.stroke();
+    const y = clamp(pointer.y, m.top, m.bot), v = Math.round(scoreAtS(meterS(y, m), climber, stats.score) / 10) * 10;
+    ctx.font = `700 13px ${BODY}`; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    const rw = ctx.measureText(String(v)).width + 16, rx = cx + 12;
+    ctx.fillStyle = rgba(fg); rr(rx, y - 12, rw, 24, 12); ctx.fill();
+    ctx.fillStyle = rgba(dark ? C.nightInk : C.foam); ctx.fillText(String(v), rx + 6, y + 0.5);
+  }
+  // You.
+  ctx.fillStyle = rgba(C.sun); ctx.beginPath(); ctx.arc(cx, yc, m.phone ? 6 : 7, 0, TAU); ctx.fill();
+  ctx.strokeStyle = rgba(C.sunShadow); ctx.lineWidth = 2; ctx.stroke();
+  const label = String(Math.round(meterScore / 10) * 10);
+  ctx.font = `16px ${HEAD}`;
+  const kw = m.phone ? 0 : 32;
+  const ph = 24, bw = ctx.measureText(label).width + kw + 16, bx = cx + 12;
+  ctx.fillStyle = rgba(C.sun); rr(bx, yc - ph / 2, bw, ph, ph / 2); ctx.fill();
+  ctx.strokeStyle = rgba(C.sunShadow); ctx.lineWidth = 1.5; ctx.stroke();
+  ctx.fillStyle = rgba(C.ink); ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+  if (!m.phone) { ctx.font = `700 13px ${BODY}`; ctx.fillText('You', bx + 8, yc + 0.5); }
+  ctx.font = `16px ${HEAD}`; ctx.fillText(label, bx + 8 + kw, yc + 1);
+}
+
+// ═══════════════════════ Frame ═══════════════════════
+let last = performance.now();
+const t0 = clock();
+const ffParam = Math.max(0, parseFloat(params.get('ff')) || 0);
+let ffLeft = 0;
+// QA: ?px=0.8&py=0.2 parks a virtual mouse there (fractions of the viewport) to exercise lean / drift / zoom.
+const simPointer = params.has('px') ? [parseFloat(params.get('px')), parseFloat(params.get('py') ?? '0.5')] : null;
+let chromeDark = null;
+function update(dt, now) {
+  const t = (now - t0) / 1000;
+  if (simPointer && phase === 'live') Object.assign(pointer, { x: simPointer[0] * VW, y: simPointer[1] * VH, in: true, active: true, lastMove: now, type: 'mouse' });
+  if (phase === 'pre') { targetS = 9 + Math.sin(t * 0.2) * 2; targetZ = 0.5; }
+  else if (phase === 'intro') updateIntro((now - intro.start) / 1000, now);
+  else { updateNav(dt, now); updateZone(now); }
+  const introRide = phase === 'intro';
+  // Critically damped; w≈12 settles in ~0.3s without overshoot.
+  springTo(dt, reduceMotion ? 30 : introRide ? 9 : 12, reduceMotion ? 30 : introRide ? 5 : 10);
+  applyCam();
+  meterC = climber;
+  if (phase === 'live' || intro.fired.has('arrive')) climberAppear = Math.min(1, climberAppear + dt * 2.2);
+  if (hop && now - hop.t0 > hop.dur + 50) {
+    const [x, y] = treadC(hop.to); rings.push({ x, y, t: 0, max: 0.9, c: C.foam }); hop = null;
+    score.sfx('step'); // the climber lands on its new step
+  }
+  if (pendingUnlock && now >= pendingUnlock.at) {
+    for (const i of pendingUnlock.idx) { V[i].flash = 0.9; V[i].flashC = C.sun; V[i].lit = 1; V[i].litT = 1; }
+    score.sfx('unlock'); pendingUnlock = null;
+  }
+  if (phase === 'live') meterScore += (meterScoreTarget - meterScore) * (1 - Math.exp(-dt * 2.5));
+  const k6 = 1 - Math.exp(-dt * 6), k9 = 1 - Math.exp(-dt * 9), k14 = 1 - Math.exp(-dt * 14);
+  for (let i = 0; i < N; i++) {
+    const v = V[i], l = journey[i];
+    if (!(v.hold && now < v.hold)) {
+      v.m += ((l.state === 'mastered' ? 1 : 0) - v.m) * k6;
+      v.f += ((l.state === 'frontier' ? 1 : 0) - v.f) * k6;
+    }
+    const tl = phase === 'pre' ? 0 : phase === 'intro' ? v.litT : 1;
+    v.lit += (tl - v.lit) * k9;
+    if (v.flash > 0) v.flash = Math.max(0, v.flash - dt * 1.5);
+    v.lift += ((i === hovered && phase === 'live' ? 1 : 0) - v.lift) * k14;
+  }
+  return t;
+}
+
+const perf = { n: 0, ms: 0 };
+function frame(real) {
+  const f0 = performance.now();
+  const dt = Math.min(0.05, Math.max(0.001, (real - last) / 1000)); last = real;
+  // QA fast-forward: run extra fixed steps so headless captures see settled motion.
+  if (ffLeft > 0 && phase !== 'pre') {
+    const chunk = Math.min(ffLeft, 0.6);
+    for (let k = 0; k < Math.round(chunk * 60); k++) { clockOffset += 1000 / 60; update(1 / 60, clock()); tickSim(1 / 60); }
+    ffLeft -= chunk;
+  }
+  const now = clock();
+  const t = update(dt, now);
+
+  // ── hover
+  pointer.onMeter = pointer.in && pointer.type !== 'touch' && inMeter(pointer.x, pointer.y);
+  if (phase === 'live' && forcedHover >= 0) hovered = forcedHover;
+  else if (phase === 'live' && pointer.in && pointer.active && !pointer.onMeter && !cardOpen) hovered = hitStep(pointer.x, pointer.y, 18);
+  else if (phase !== 'live' || cardOpen || !pointer.in) hovered = -1;
+  if (hovered !== lastHovered) {
+    // Only when the pointer moved onto a step, not when steps glide under a still cursor.
+    if (hovered >= 0 && now - pointer.lastMove < 150 && Math.abs(cam.vs) < 4) score.sfx('hover');
+    lastHovered = hovered;
+  }
+  cv.style.cursor = pointer.onMeter ? 'ns-resize' : hovered >= 0 ? 'pointer' : 'default';
+
+  // ── draw
+  hulls.clear();
+  drawSky(t);
+  drawSeaBack(t);
+  drawClouds((c) => c.p < 0.6, t);
+  drawClouds((c) => !c.fg && c.p >= 0.6, t);
+  const [lo, hi] = visibleRange();
+  worldT();
+  for (let i = lo; i <= hi; i++) if (i !== hovered) drawStep(i, t);
+  if (hovered >= lo && hovered <= hi) { worldT(); drawStep(hovered, t); }
+  worldT();
+  frontierShimmer(lo, hi, t);
+  drawStepNumbers(lo, hi);
+  drawMarkers(lo, hi, t);
+  const cw = drawClimber(now, t, dt);
+  tickSim(dt);
+  drawParticles();
+  if (lo <= 6) drawSeaFront(t);
+  drawClouds((c) => c.fg, t);
+  const hs = halfSpan();
+  drawMeter(t, hs);
+
+  // ── DOM overlays
+  // Label for the hovered step, pinned to the step itself so it never chases the cursor.
+  if (hovered >= 0 && (hovered === N || hulls.has(hovered)) && !cardOpen) {
+    const a = stepAnchor(hovered);
+    showTip(hovered, a.x, a.top, a.bottom);
+  } else if (tipFor !== -2) hideTip();
+
+  // The frontier invite. It steps aside while a label is open, so text never sits on text.
+  const showNext = nextShown && phase === 'live' && !cardOpen && !hop && cw && hovered < 0 && orbHit
+    && orbHit.x > 24 && orbHit.x < VW - 24 && orbHit.y > 24 && orbHit.y < VH - 80;
+  if (showNext && hulls.has(climber)) {
+    const a = stepAnchor(climber);
+    const pos = placeBox(nextPill.offsetWidth, nextPill.offsetHeight + 10, orbHit.x, a.top, a.bottom);
+    nextPill.classList.add('show');
+    nextPill.classList.toggle('below', pos.below);
+    nextPill.style.transform = `translate(${Math.round(pos.x)}px, ${Math.round(pos.y + (pos.below ? 10 : 0))}px)`;
+  } else nextPill.classList.remove('show');
+  if (phase === 'live' && cw) {
+    const [hx, hy] = P(cw.x, cw.y);
+    const off = hx < 0 || hx > VW || hy < 0 || hy > VH;
+    homePill.classList.toggle('show', off);
+    homePill.querySelector('svg').style.transform = climber < cam.s ? 'rotate(180deg)' : '';
+  }
+
+  // Chrome adapts to the sky behind it.
+  const bottomDark = lum(skyAtY(VH - 40)) < 0.56;
+  if (bottomDark !== chromeDark) {
+    chromeDark = bottomDark;
+    if (bottomDark) document.documentElement.setAttribute('data-chrome', 'dark'); else document.documentElement.removeAttribute('data-chrome');
+  }
+  document.body.style.setProperty('--hud-fg', lum(skyAtY(60)) < 0.5 ? '#FFFFFC' : '#0A234F');
+
+  perf.n++; perf.ms += performance.now() - f0;
+  if (params.has('debug')) { frame.n++; document.body.dataset.dbg = [frame.n, t.toFixed(2), phase, cam.s.toFixed(2), anchor.toFixed(2), cam.z.toFixed(2), hovered].join(' '); }
+  requestAnimationFrame(frame);
+}
+frame.n = 0;
+requestAnimationFrame(frame);
+
+// ═══════════════════════ QA hooks ═══════════════════════
+// ?skipgate=1 [&t=seconds] [&demo=hover|complete|summit|overview|locked|intro]
+function runDemo() {
+  if (!demo || demo === 'intro') return;
+  const wait = () => new Promise((r) => { const check = () => (phase === 'live' ? r() : setTimeout(check, 50)); check(); });
+  wait().then(() => {
+    if (demo === 'summit') { anchor = N - 0.2; }
+    else if (demo === 'overview') { anchor = climber - 6; }
+    else if (demo === 'hover') { forcedHover = Math.max(0, climber - 4); anchor = climber - 2; }
+    else if (demo === 'locked') { anchor = lockStart + 4; forcedHover = lockStart + 3; }
+    else if (demo === 'complete') {
+      setTimeout(() => {
+        card.open(journey[climber]);
+        const b = card.el.querySelector('.actions .kg-btn.primary');
+        b?.click();
+      }, 200);
+    }
+    cam.s = anchor; targetS = anchor;
+  });
+}
+runDemo();
+window.__ascent = { graph, cam, score, hit: hitStep, hulls, perf, get journey() { return journey; }, get climber() { return climber; }, get phase() { return phase; }, V };
+</script>
+</body>
+</html>

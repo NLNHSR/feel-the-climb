@@ -1,0 +1,1677 @@
+<!doctype html>
+<!--
+  Sound design — Living Tree
+  Music: warm, organic, hopeful. Plucked nylon guitar and marimba over soft string swells and a
+  low cello drone; no drums at rest, light hand percussion (shaker, frame drum) as intensity rises.
+  Key of D major, ~84 bpm. Intensity 0 = morning stillness, 1 = full bloom.
+  Events (score.sfx):
+    hover    — a soft leaf rustle (dry, very short, quiet)
+    select   — a single wooden marimba note
+    back     — the same marimba note a fourth lower, softer
+    zoomIn   — a gentle breath of wind rising through leaves (~0.4s)
+    zoomOut  — the same breath falling away (~0.4s)
+    start    — a bud swelling: a short airy pluck that leans upward
+    complete — a blossom pop (a soft “puh” of petals) followed by an airy chime
+    unlock   — a small bright kalimba note, like a new bud appearing
+    intro    — a warm full-chord bloom (strings + marimba) as the canopy completes
+    riser    — a slow rising string swell with growing leaf rustle (~2.8s)
+    step     — a tiny marimba/kalimba tick per leaf popping in, pitched slightly higher each time
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Living Tree</title>
+<link rel="stylesheet" href="../shared/dolphin.css">
+<style>
+  html, body { overflow: hidden; background: #CFEFFF; color: var(--ink); }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  #bg, #blur { pointer-events: none; }
+  /* Out-of-focus branches: soft and quiet, never louder than the branch you're looking at. */
+  #blur { filter: blur(2.5px) saturate(0.75); }
+  #crisp { touch-action: none; }
+
+  /* One compact status pill (top-left). 8px rhythm; 20 / 14 / 12 type. */
+  .hud { position: fixed; top: 16px; left: 16px; z-index: 20; pointer-events: none; }
+  .hud-panel {
+    display: flex; align-items: baseline; gap: 16px; padding: 8px 16px;
+    background: var(--foam); border: 2px solid var(--mist); border-radius: 999px; box-shadow: 0 3px 0 var(--chrome-shadow);
+  }
+  .hud .count { font-family: var(--font-head); font-size: 20px; line-height: 24px; white-space: nowrap; color: var(--ink); }
+  .hud .count b { font-weight: normal; color: var(--success); }
+  .hud .proj { font-size: 12px; font-weight: 700; color: var(--muted); white-space: nowrap; }
+  .hud .proj b { color: var(--ink); font-weight: 800; }
+
+  /* One short hint, shown once. */
+  .hint {
+    position: fixed; top: 16px; left: 50%; transform: translate(-50%, -4px); z-index: 20; pointer-events: none; white-space: nowrap;
+    font-size: 14px; font-weight: 700; line-height: 20px; color: var(--ink); padding: 8px 16px;
+    background: var(--foam); border: 2px solid var(--mist); border-radius: 999px;
+    opacity: 0; transition: opacity 400ms cubic-bezier(.2,.8,.2,1), transform 400ms cubic-bezier(.2,.8,.2,1);
+  }
+  .hint.show { opacity: 1; transform: translate(-50%, 0); }
+  .skip {
+    position: fixed; top: 16px; right: 16px; z-index: 21; height: 40px; padding: 0 16px; border-radius: 999px;
+    font: 800 14px/1 var(--font-body); color: var(--ink); background: var(--foam); border: 2px solid var(--mist);
+    box-shadow: 0 3px 0 var(--chrome-shadow); cursor: pointer;
+  }
+  .skip:active { transform: translateY(3px); box-shadow: none; }
+  .skip[hidden] { display: none; }
+
+  .tip {
+    position: fixed; left: 0; top: 0; pointer-events: none; z-index: 30; max-width: 240px;
+    background: var(--foam); color: var(--ink); border: 2px solid var(--mist); border-radius: 16px;
+    padding: 8px 12px; box-shadow: 0 3px 0 var(--chrome-shadow);
+    opacity: 0; transition: opacity 90ms ease-out;
+  }
+  .tip.show { opacity: 1; }
+  body.card-open .kg-caption { left: calc((100vw - 392px) / 2); max-width: min(640px, calc(100vw - 440px)); }
+  .tip .k { display: flex; align-items: center; gap: 8px; font-size: 12px; line-height: 16px; font-weight: 700; color: var(--muted); }
+  .tip .k i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; }
+  .tip b { display: block; font-weight: 800; font-size: 14px; line-height: 20px; }
+  .tip small { display: block; font-weight: 700; font-size: 12px; line-height: 16px; }
+  .tip small.mastered { color: #2E8A55; }
+  .tip small.frontier { color: #8A6D00; }
+  .tip small.locked { color: var(--muted); }
+
+  @media (max-width: 640px) {
+    .hud { top: 12px; left: 12px; }
+    .hud-panel { gap: 8px; padding: 8px 16px; }
+    .hud .count { font-size: 18px; }
+    .hint { top: 64px; }
+    .skip { top: auto; bottom: 72px; right: 12px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .tip, .hint { transition: none; }
+  }
+</style>
+</head>
+<body>
+<canvas id="bg" aria-hidden="true"></canvas>
+<canvas id="blur" aria-hidden="true"></canvas>
+<canvas id="crisp" role="img" aria-label="Your SAT knowledge tree. The trunk is the SAT, five limbs are the domains, branches are topics and every leaf is a lesson. Move the pointer toward a limb to look closer; Escape steps back."></canvas>
+
+<header class="hud">
+  <div class="hud-panel" aria-live="polite"><span class="count"><b id="hudCount">0</b> of <span id="hudTotal">89</span> leaves</span><span class="proj">Projected <b id="hudScore">400</b></span></div>
+</header>
+<div class="hint" id="hint">Move toward any branch to look closer.</div>
+<button class="skip" id="skip" hidden>Skip intro</button>
+<div class="tip" id="tip"></div>
+
+<script type="module">
+import { createGraph, DOMAIN_HUES, pct, clamp, projectedScore } from '../shared/graph.js';
+import { mountChrome } from '../shared/chrome.js';
+import { createLessonCard } from '../shared/lesson-card.js';
+
+// ───────────────────────── Basics ─────────────────────────
+const Q = new URLSearchParams(location.search);
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches || Q.has('still');
+const TAU = Math.PI * 2, DEG = Math.PI / 180;
+const lerp = (a, b, t) => a + (b - a) * t;
+const smooth = (t) => t * t * (3 - 2 * t);
+const easeOut = (t) => 1 - Math.pow(1 - t, 3);
+const easeBack = (t) => { const c = 1.7; const u = t - 1; return 1 + (c + 1) * u * u * u + c * u * u; };
+const prog = (t, a, d) => clamp((t - a) / d, 0, 1);
+function mulberry32(a) {
+  return () => { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+}
+const hexRgb = (c) => { const v = parseInt(c.slice(1), 16); return [(v >> 16) & 255, (v >> 8) & 255, v & 255]; };
+const mix = (a, b, t) => { const A = hexRgb(a), B = hexRgb(b); return '#' + A.map((v, i) => Math.round(v + (B[i] - v) * t).toString(16).padStart(2, '0')).join(''); };
+
+const C = {
+  ink: '#0A234F', muted: '#536A86', foam: '#FFFFFC', mist: '#D9E4F2', paper: '#F0F2F5', sky: '#CFEFFF',
+  wave3: '#2F9AE6', waveShadow: '#1E6FBE', sun: '#FFF44E', sunShadow: '#E8BE00', success: '#3FA669',
+};
+const BARK = { dark: '#4A3424', base: '#6E4D37', light: '#93694C', hi: '#B08463' };
+const PALE = { dark: '#ADA196', base: '#C3B8AE', light: '#D6CDC4', hi: '#E3DCD5' };
+const BODY = '"Manrope", system-ui, sans-serif';
+// Two canvas type styles (plus the 20px HUD count): names and secondary lines.
+const F_NAME = `800 14px ${BODY}`, F_SUB = `700 12px ${BODY}`, F_SMALL = `800 12px ${BODY}`;
+const LH_NAME = 18, LH_SUB = 16, LH_SMALL = 15;
+
+const ROOTS_LINE = 'Roots first. Everything up there stands on this.';
+
+// ───────────────────────── Graph + chrome ─────────────────────────
+const graph = createGraph();
+const { root, nodes, domains, leaves } = graph;
+const { score, caption } = mountChrome({
+  id: 'living-tree',
+  eyebrow: 'Your SAT knowledge graph',
+  title: 'Living Tree',
+  tagline: 'Everything you have learned, grown into one tree.',
+  gateBackground: 'radial-gradient(120% 80% at 50% 108%, #3FA669 0%, #1E6FBE 34%, #103B84 64%, #0A2B64 100%)',
+  beginLabel: 'Grow my tree',
+  onBegin: (o) => startIntro(o),
+});
+const card = createLessonCard(graph, {
+  score, caption: () => {},          // the card's own pep line is replaced by one plain line below
+  onComplete: (evt) => onLessonComplete(evt),
+  onOpen: () => { pending = null; },
+  onClose: () => { pointer.travel = 0; },
+});
+const sfxLog = [];
+const sfx = (name, o) => { sfxLog.push([Math.round(performance.now()), name]); if (sfxLog.length > 120) sfxLog.shift(); score.sfx?.(name, o); };
+
+// ───────────────────────── Shapes ─────────────────────────
+const LEAF = new Path2D(); LEAF.moveTo(0, 0); LEAF.bezierCurveTo(0.25, -0.42, 0.7, -0.36, 1, 0); LEAF.bezierCurveTo(0.7, 0.3, 0.25, 0.36, 0, 0);
+const LEAF_HI = new Path2D(); LEAF_HI.moveTo(0.06, -0.02); LEAF_HI.bezierCurveTo(0.27, -0.38, 0.68, -0.33, 0.97, -0.01); LEAF_HI.bezierCurveTo(0.6, -0.08, 0.3, -0.06, 0.06, -0.02);
+const BLOSSOM = new Path2D();
+for (let k = 0; k < 5; k++) { const a = (k / 5) * TAU - Math.PI / 2; BLOSSOM.ellipse(Math.cos(a) * 0.52, Math.sin(a) * 0.52, 0.56, 0.44, a, 0, TAU); BLOSSOM.closePath(); }
+const BUD = new Path2D(); BUD.moveTo(0, -0.42); BUD.bezierCurveTo(0.42, -0.46, 0.86, -0.22, 1.08, 0); BUD.bezierCurveTo(0.86, 0.22, 0.42, 0.46, 0, 0.42); BUD.bezierCurveTo(-0.14, 0.2, -0.14, -0.2, 0, -0.42);
+const BUD_SEAM = new Path2D(); BUD_SEAM.moveTo(0.1, 0.02); BUD_SEAM.bezierCurveTo(0.45, 0.08, 0.8, 0.04, 1.02, 0);
+const CIRCLE = new Path2D(); CIRCLE.arc(0, 0, 1, 0, TAU);
+
+// ───────────────────────── Tree layout ─────────────────────────
+// The crown is laid out in polar slots around the top of the trunk, then squashed to the screen's
+// shape (tall on phones, wide on desktops) so the whole tree fills the frame without clipping.
+let TRUNK_H = 300, KX = 1, KY = 1, SHAPE = '';
+const O = { x: 0, y: -292 };                   // crown origin (top of the trunk)
+const SPREAD = 122 * DEG;                      // canopy wraps ±122° around the crown origin
+const DOMAIN_GAP = 0.75;                       // gap between limbs, in spine slots
+const R = { limb: 168, spine0: 252, step: 19, rung: 22 };
+const LEAF_R = 16;                             // world radius of a leaf cluster
+function shapeFor(w, h) { const r = w / h; return r < 0.85 ? 'tall' : r > 1.45 ? 'wide' : 'square'; }
+function setShape(s) {
+  SHAPE = s;
+  [KX, KY, TRUNK_H] = s === 'tall' ? [0.66, 1.18, 360] : s === 'wide' ? [1.1, 0.92, 290] : [1, 1, 300];
+  O.y = -(TRUNK_H - 8);
+}
+
+const P2 = (x, y) => ({ x, y });
+const add = (a, b) => P2(a.x + b.x, a.y + b.y);
+const sub = (a, b) => P2(a.x - b.x, a.y - b.y);
+const mul = (a, k) => P2(a.x * k, a.y * k);
+const vlen = (a) => Math.hypot(a.x, a.y);
+const norm = (a) => { const l = vlen(a) || 1; return P2(a.x / l, a.y / l); };
+const rot = (a, t) => { const c = Math.cos(t), s = Math.sin(t); return P2(a.x * c - a.y * s, a.x * s + a.y * c); };
+const lerpV = (a, b, t) => P2(lerp(a.x, b.x, t), lerp(a.y, b.y, t));
+const dirOf = (ang) => norm(P2(Math.sin(ang) * KX, -Math.cos(ang) * KY));   // 0 = up, + = clockwise
+const polar = (ang, r) => P2(O.x + Math.sin(ang) * r * KX, O.y - Math.cos(ang) * r * KY);
+function bez(P, t) {
+  const u = 1 - t, a = u * u * u, b = 3 * u * u * t, c = 3 * u * t * t, d = t * t * t;
+  return P2(a * P[0].x + b * P[1].x + c * P[2].x + d * P[3].x, a * P[0].y + b * P[1].y + c * P[2].y + d * P[3].y);
+}
+function bezT(P, t) {
+  const u = 1 - t;
+  const x = 3 * u * u * (P[1].x - P[0].x) + 6 * u * t * (P[2].x - P[1].x) + 3 * t * t * (P[3].x - P[2].x);
+  const y = 3 * u * u * (P[1].y - P[0].y) + 6 * u * t * (P[2].y - P[1].y) + 3 * t * t * (P[3].y - P[2].y);
+  return norm(P2(x, y));
+}
+function sampleCurve(P, N) {
+  const pts = []; let acc = 0, prev = null;
+  for (let i = 0; i <= N; i++) {
+    const t = i / N, p = bez(P, t);
+    if (prev) acc += Math.hypot(p.x - prev.x, p.y - prev.y);
+    pts.push({ x: p.x, y: p.y, t, s: acc }); prev = p;
+  }
+  return pts;
+}
+function atArc(pts, s) {
+  for (let i = 1; i < pts.length; i++) {
+    if (pts[i].s >= s) {
+      const a = pts[i - 1], b = pts[i], f = (s - a.s) / Math.max(1e-6, b.s - a.s);
+      return { x: lerp(a.x, b.x, f), y: lerp(a.y, b.y, f), t: lerp(a.t, b.t, f), tan: norm(P2(b.x - a.x, b.y - a.y)) };
+    }
+  }
+  const a = pts[pts.length - 2], b = pts[pts.length - 1];
+  return { x: b.x, y: b.y, t: 1, tan: norm(P2(b.x - a.x, b.y - a.y)) };
+}
+
+const isSpine = (n) => n.children.length > 0 && n.children.every((c) => !c.children.length);
+const spineCount = (n) => (isSpine(n) ? 1 : n.children.reduce((a, c) => a + spineCount(c), 0));
+const leafWeight = (l) => (l.state === 'mastered' ? 1 : l.state === 'frontier' ? 0.7 : 0.3);
+const subWeight = (n) => (n.children.length ? n.children.reduce((a, c) => a + subWeight(c), 0) : leafWeight(n));
+const isAlive = (n) => (n.children.length ? n.masteredCount > 0 || n.frontier > 0 : n.state !== 'locked');
+const lessonsOf = (n) => (n.children.length ? n.children.flatMap(lessonsOf) : [n]);
+const PAL = {};
+for (const d of domains) {
+  const h = DOMAIN_HUES[d.label];
+  PAL[d.label] = { hue: h, leaves: [mix(h, C.ink, 0.3), mix(h, C.ink, 0.12), h, mix(h, C.foam, 0.16)], hi: mix(h, C.foam, 0.38), petal: mix(h, C.foam, 0.52), petalEdge: mix(h, C.foam, 0.2) };
+}
+
+const order = [...nodes].sort((a, b) => a.depth - b.depth);   // parents before children
+for (const n of nodes) {
+  n.v = { vis: 1, sharp: 1, tVis: 1, tSharp: 1, prox: 0, tProx: 0, hl: 0, fT: n === root ? 1 : 0, damp: 1, grads: new WeakMap(), M: [1, 0, 0, 1, 0, 0] };
+}
+const ROOTS = { id: 'roots', isRoots: true, label: 'Roots', parent: root, children: [], depth: 1, v: { vis: 1, sharp: 1, prox: 0, tProx: 0, fT: 0 } };
+
+// Center-out order: the last (most advanced) topic continues the limb in the middle; earlier ones
+// fork lower on the limb and sweep to the edges. Foundations sit lowest; the crown is advanced work.
+function centerOut(list, outerRight) {
+  const out = [];
+  for (let k = list.length - 1, i = 0; k >= 0; k--, i++) { if (i % 2) out.unshift(list[k]); else out.push(list[k]); }
+  return outerRight ? out : out.reverse();
+}
+// Slot u (in spine units) → crown angle, spacing spines evenly in the squashed crown.
+function slotMapper(units) {
+  const N = 480, lat = (a) => Math.hypot(Math.cos(a) * KX, Math.sin(a) * KY);
+  const run = (c) => { const A = [-SPREAD]; let a = -SPREAD; for (let i = 0; i < N; i++) { a += (c / lat(a)) * (units / N); A.push(a); } return A; };
+  let lo = 0.001, hi = 1, A = null;
+  for (let it = 0; it < 40; it++) { const mid = (lo + hi) / 2; A = run(mid); if (A[N] > SPREAD) hi = mid; else lo = mid; }
+  A = run(lo);
+  return (u) => { const f = clamp(u / units, 0, 1) * N, i = Math.min(N - 1, Math.floor(f)); return lerp(A[i], A[i + 1], f - i); };
+}
+
+function layout() {
+  const rr = mulberry32(20261121);
+  const units = domains.reduce((a, d) => a + spineCount(d), 0) + DOMAIN_GAP * (domains.length - 1);
+  const angleAt = slotMapper(units);
+  const tb = root.v;
+  tb.P = [P2(0, 0), P2(14, -TRUNK_H * 0.36), P2(-16, -TRUNK_H * 0.7), P2(0, -TRUNK_H)];
+  let cu = 0;
+  for (const d of domains) {
+    const sc = spineCount(d);
+    d.v.u0 = cu; d.v.a0 = angleAt(cu); d.v.a1 = angleAt(cu + sc); d.v.ac = angleAt(cu + sc / 2);
+    cu += sc + DOMAIN_GAP;
+  }
+  domains.forEach((d) => {
+    const b = d.v, ac = b.ac, outer = Math.abs(ac) / SPREAD;
+    b.attachU = 0.97 - 0.17 * outer;
+    const A = bez(tb.P, b.attachU);
+    const E = polar(ac, R.limb * (1 - 0.06 * outer));
+    const d0 = dirOf(ac * 0.42), d1 = dirOf(ac);
+    const L = vlen(sub(E, A));
+    b.P = [A, add(A, mul(d0, L * 0.45)), sub(E, mul(d1, L * 0.3)), E];
+    const n = d.children.length;
+    let c = b.u0;
+    for (const t of centerOut(d.children, ac > 0)) {
+      const s = spineCount(t);
+      t.v.u0 = c; t.v.ac = angleAt(c + s / 2); c += s;
+    }
+    d.children.forEach((t, k) => {
+      const u = n > 1 ? 0.3 + (0.7 * k) / (n - 1) : 1;
+      t.v.attachU = u;
+      const F = bez(b.P, u), tF = bezT(b.P, u);
+      const rs = R.spine0 + k * R.step + (rr() - 0.5) * 10;
+      if (isSpine(t)) placeSpine(t, F, tF, t.v.ac, rs, rr);
+      else {
+        const SF = polar(t.v.ac, rs - 34);
+        const dFS = vlen(sub(SF, F));
+        const em = norm(lerpV(tF, norm(sub(SF, F)), 0.62));
+        t.v.P = [F, add(F, mul(em, dFS * 0.38)), sub(SF, mul(dirOf(t.v.ac), dFS * 0.3)), SF];
+        const subs = ac > 0 ? [...t.children] : [...t.children].reverse();
+        subs.forEach((s, j) => { s.v.ac = angleAt(t.v.u0 + j + 0.5); });
+        t.children.forEach((s, j) => { s.v.attachU = 1; placeSpine(s, SF, dirOf(t.v.ac), s.v.ac, rs + 10 + j * 9, rr); });
+      }
+    });
+  });
+  for (const n of nodes) n.v.B = n.v.P[0];
+}
+
+function placeSpine(sp, F, tF, ang, rs, rr) {
+  const m = sp.children.length;
+  const spineLen = 14 + (m - 1) * R.rung;
+  const S = polar(ang, rs), T = polar(ang * 0.93, rs + spineLen);
+  const dFS = vlen(sub(S, F));
+  const em = rot(norm(lerpV(tF, norm(sub(S, F)), 0.58)), (rr() - 0.5) * 0.25);
+  const bend = rot(dirOf(ang), (rr() < 0.5 ? -1 : 1) * (0.12 + rr() * 0.14));
+  sp.v.P = [F, add(F, mul(em, dFS * 0.4)), sub(T, mul(bend, spineLen * 0.85 + dFS * 0.28)), T];
+  const pts = sampleCurve(sp.v.P, 48), Ltot = pts[pts.length - 1].s;
+  sp.children.forEach((l, j) => {
+    const back = (m - 1 - j) * R.rung;
+    const at = atArc(pts, Ltot - back);
+    const v = l.v;
+    v.attachU = at.t;
+    const side = j === m - 1 ? 0 : ((m - 1 - j) % 2 ? 1 : -1);
+    v.side = side;
+    const dir = side ? rot(at.tan, side * 44 * DEG) : at.tan;
+    const tl = side ? 17 + rr() * 3 : 12;
+    const A = P2(at.x, at.y);
+    const endDir = side ? rot(dir, -side * 16 * DEG) : dir;
+    const T2 = add(A, mul(norm(add(dir, endDir)), tl));
+    v.P = [A, add(A, mul(dir, tl * 0.42)), sub(T2, mul(endDir, tl * 0.32)), T2];
+    v.tip = T2; v.tipA = Math.atan2(endDir.y, endDir.x);
+    // Label direction: away from the spine on the twig's side (or straight out for the tip bud).
+    v.lblDir = side ? norm(rot(at.tan, side * 90 * DEG)) : at.tan;
+    v.cluster = [-1.3, -0.62, 0.02, 0.66, 1.32].map((a, i) => ({
+      a: a + (rr() - 0.5) * 0.3, len: (i === 2 ? 17 : 14.5) + rr() * 4, wid: 11 + rr() * 2.5, shade: Math.floor(rr() * 3.99), lift: i === 2 ? 1.2 : 0,
+    }));
+    v.blRot = rr() * TAU; v.budTilt = (rr() - 0.5) * 0.3; v.ph = rr() * TAU;
+  });
+}
+
+// Widths follow a pipe model: a branch is as thick as the life it carries.
+function computeWidths() {
+  const WK = 5.7, WS = 4.1;
+  for (const n of nodes) {
+    const v = n.v, wt = subWeight(n), alive = isAlive(n);
+    v.alive = alive;
+    if (n === root) { v.w0 = WK * Math.sqrt(wt) * 1.05; v.w1 = v.w0 * 0.42; v.flare = 22; }
+    else if (n.depth === 1) { v.w0 = WK * Math.sqrt(wt) * 0.92; v.w1 = WS * Math.sqrt(subWeight(n.children[n.children.length - 1])) * 1.05; v.flare = 0; }
+    else if (!n.children.length) { v.w0 = n.state === 'mastered' ? 2.5 : n.state === 'frontier' ? 2.2 : 1.4; v.w1 = n.state === 'locked' ? 0.6 : 1.0; }
+    else if (isSpine(n)) { v.w0 = WS * Math.sqrt(wt) * (alive ? 1 : 0.72); v.w1 = alive ? 1.2 : 0.8; }
+    else { v.w0 = WS * Math.sqrt(wt); v.w1 = WS * Math.sqrt(wt) * 0.78; }
+    v.collar = n.depth === 1 ? 0.14 : n.depth <= 3 && n.depth >= 2 ? 0.2 : 0;
+    // The trunk, limbs and topic forks hand off to the branches that continue them: no end caps.
+    v.nocap = n === root || n.depth === 1 || (n.children.length > 0 && !isSpine(n));
+  }
+}
+
+function buildBranchPath(v, N) {
+  const pts = sampleCurve(v.P, N), B = v.P[0];
+  v.pts = pts; v.len = pts[pts.length - 1].s;
+  const L = [], Rr = [];
+  for (let i = 0; i <= N; i++) {
+    const p = pts[i], q0 = pts[Math.max(0, i - 1)], q1 = pts[Math.min(N, i + 1)];
+    const tx = q1.x - q0.x, ty = q1.y - q0.y, tl = Math.hypot(tx, ty) || 1;
+    const nx = -ty / tl, ny = tx / tl, u = i / N;
+    let w = lerp(v.w0, v.w1, Math.pow(u, 0.85)) / 2;
+    if (v.flare) w += v.flare * Math.pow(1 - u, 7);
+    if (v.collar) w += v.w0 * v.collar * Math.pow(1 - u, 12);
+    L.push([p.x - B.x + nx * w, p.y - B.y + ny * w]);
+    Rr.push([p.x - B.x - nx * w, p.y - B.y - ny * w]);
+  }
+  const path = new Path2D();
+  path.moveTo(L[0][0], L[0][1]);
+  for (let i = 1; i < L.length; i++) path.lineTo(L[i][0], L[i][1]);
+  for (let i = Rr.length - 1; i >= 0; i--) path.lineTo(Rr[i][0], Rr[i][1]);
+  path.closePath();
+  const tip = pts[N];
+  // Caps wind the same way as the outline (anticlockwise) so nonzero fill unions them instead of punching holes.
+  if (!v.nocap) { path.moveTo(tip.x - B.x + v.w1 / 2, tip.y - B.y); path.arc(tip.x - B.x, tip.y - B.y, v.w1 / 2, 0, TAU, true); }
+  if (v.baseCap) { path.moveTo(v.w0 / 2, 0); path.arc(0, 0, v.w0 / 2, 0, TAU, true); }
+  v.path = path;
+  // Lighting: a linear gradient across the branch, lit from the sun (upper right).
+  const d = norm(sub(tip, B)), nrm = P2(-d.y, d.x);
+  const lit = nrm.x * 0.55 + nrm.y * -0.83 > 0 ? nrm : mul(nrm, -1);
+  const mid = mul(sub(tip, B), 0.5), wA = Math.max(v.w0, v.w1) * 0.5 + 0.5;
+  v.g0 = add(mid, mul(lit, wA)); v.g1 = sub(mid, mul(lit, wA));
+  v.grads = new WeakMap();
+}
+function barkFill(ctx, v) {
+  let g = v.grads.get(ctx);
+  if (!g) {
+    const pal = v.alive === false ? PALE : BARK;
+    g = ctx.createLinearGradient(v.g0.x, v.g0.y, v.g1.x, v.g1.y);
+    g.addColorStop(0, pal.hi); g.addColorStop(0.3, pal.light); g.addColorStop(0.65, pal.base); g.addColorStop(1, pal.dark);
+    v.grads.set(ctx, g);
+  }
+  return g;
+}
+// Bark grain on the trunk and limbs (static, local coords).
+function buildGrain(v, count, rr) {
+  const p = new Path2D(), B = v.P[0];
+  for (let k = 0; k < count; k++) {
+    const off = (k / (count - 1) - 0.5) * 0.7 + (rr() - 0.5) * 0.08;
+    const t0 = rr() * 0.25, t1 = 0.55 + rr() * 0.45;
+    for (let i = 0; i <= 14; i++) {
+      const t = lerp(t0, t1, i / 14), q = bez(v.P, t), tg = bezT(v.P, t), nrm = P2(-tg.y, tg.x);
+      const w = lerp(v.w0, v.w1, Math.pow(t, 0.85)) + (v.flare ? v.flare * 2 * Math.pow(1 - t, 7) : 0);
+      const o = off * w + Math.sin(t * 22 + k) * 0.8;
+      const x = q.x - B.x + nrm.x * o, y = q.y - B.y + nrm.y * o;
+      if (i === 0) p.moveTo(x, y); else p.lineTo(x, y);
+    }
+  }
+  v.grain = p;
+}
+
+// Crown circles, frame boxes and intro timings.
+function computeMeta() {
+  const lessonsUnder = new Map();
+  for (const n of [...order].reverse()) lessonsUnder.set(n, n.children.length ? n.children.flatMap((c) => lessonsUnder.get(c)) : [n]);
+  for (const n of nodes) {
+    if (!n.children.length) continue;
+    const ls = lessonsUnder.get(n), tips = ls.map((l) => l.v.tip);
+    const cxm = tips.reduce((a, p) => a + p.x, 0) / tips.length, cym = tips.reduce((a, p) => a + p.y, 0) / tips.length;
+    const rms = Math.sqrt(tips.reduce((a, p) => a + (p.x - cxm) ** 2 + (p.y - cym) ** 2, 0) / tips.length);
+    n.v.crown = { x: cxm, y: cym, r: rms * 1.2 + LEAF_R * 1.4 };
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    const addPt = (p, r = 0) => { x0 = Math.min(x0, p.x - r); y0 = Math.min(y0, p.y - r); x1 = Math.max(x1, p.x + r); y1 = Math.max(y1, p.y + r); };
+    for (const p of tips) addPt(p, LEAF_R * 1.25);
+    if (n !== root) {
+      for (const m of nodes) if (m !== n && m.children.length && inSub(m, n)) addPt(m.v.P[0]);
+      for (const l of ls) addPt(l.v.P[0]);
+      // A sliver of the way back toward the parent, so "out" stays close by.
+      const c = P2((x0 + x1) / 2, (y0 + y1) / 2), toB = sub(n.v.P[0], c), dB = vlen(toB);
+      addPt(add(c, mul(norm(toB), n.depth === 1 ? dB * 0.5 : Math.min(dB * 0.25, 60))));
+    } else addPt(P2(0, 0));
+    n.v.box = { x0, y0, x1, y1 };
+    n.v.maxR = Math.max(...tips.map((p) => vlen(sub(p, O))));
+  }
+  // Intro timings: trunk → limbs in domain order → topics → twigs.
+  root.v.gs = 0.75; root.v.gd = 1.45;
+  domains.forEach((d, i) => { d.v.gs = 1.7 + i * 0.2; d.v.gd = 1.0; });
+  for (const n of order) {
+    if (n.depth < 2) continue;
+    const p = n.parent.v;
+    if (!n.children.length) { n.v.gs = p.gs + p.gd * (0.35 + 0.55 * n.v.attachU); n.v.gd = 0.32; }
+    else if (n.depth === 2) { n.v.gs = p.gs + p.gd * (0.12 + 0.62 * n.v.attachU); n.v.gd = 0.75; }
+    else { n.v.gs = p.gs + p.gd * 0.7; n.v.gd = 0.6; }
+  }
+  for (const n of order) n.v.fullT = Math.max(n.v.gs + n.v.gd, n.parent ? n.parent.v.fullT : 0);
+  // Leaves pop in the order they were actually mastered.
+  const j = graph.journey().filter((l) => l.state === 'mastered');
+  j.forEach((l, i) => { l.v.popT = Math.max(4.15 + (2.6 * i) / Math.max(1, j.length - 1), l.v.fullT + 0.05); l.v.stepped = false; });
+  graph.frontierLessons().forEach((l, i) => { l.v.popT = INTRO_END + 0.08 + i * 0.03; });
+  for (const l of leaves) if (l.state === 'locked') l.v.popT = l.v.fullT;
+  // Sway: thin wood moves more.
+  const rr = mulberry32(5);
+  for (const n of nodes) {
+    const isLesson = !n.children.length;
+    n.v.amp = n === root ? 0.003 : n.depth === 1 ? 0.008 : isLesson ? 0.045 : n.depth === 2 ? 0.015 : 0.02;
+    n.v.f = (isLesson ? 1.5 : 0.9) + rr() * 0.5; n.v.phs = rr() * TAU;
+  }
+}
+
+function buildTree() {
+  computeWidths();
+  const rr = mulberry32(31);
+  for (const n of nodes) {
+    buildBranchPath(n.v, n === root ? 40 : n.depth === 1 ? 30 : !n.children.length ? 8 : 22);
+    if (n.depth <= 1) buildGrain(n.v, n === root ? 9 : 4, rr);
+    if (!n.children.length) n.v.tipL = sub(n.v.tip, n.v.B);
+    buildFoliage(n);
+  }
+}
+// Foliage: leaves sprouting along living branches, denser where more is mastered.
+// Baked per branch into one Path2D per shade (local coords), so it sways for free.
+function buildFoliage(n) {
+  const v = n.v;
+  v.fol = null;
+  if (n === root || !n.children.length) return;
+  const m = n.masteredCount / n.leafCount;
+  if (m <= 0) return;
+  const rr = mulberry32(1000 + n.id * 17);
+  const shades = [new Path2D(), new Path2D(), new Path2D()], hi = new Path2D();
+  const B = v.P[0], L = v.len;
+  const from = n.depth === 1 ? 0.5 : 0.22, to = n.depth === 1 ? 0.98 : 0.97, step = n.depth === 1 ? 11 : 7.5;
+  const dens = n.depth === 1 ? 0.12 + 0.35 * m : 0.3 + 0.7 * m;
+  let side = 1, count = 0;
+  for (let s = L * from; s <= L * to; s += step) {
+    const r1 = rr(), r2 = rr(), r3 = rr(), r4 = rr(), r5 = rr();
+    side = -side;
+    if (r1 > dens) continue;
+    const at = atArc(v.pts, s);
+    const ang = Math.atan2(at.tan.y, at.tan.x) + side * (0.55 + r2 * 0.5);
+    const len = (n.depth === 1 ? 12 : 9) + r3 * 5, wid = 7 + r4 * 3;
+    const c = Math.cos(ang), si = Math.sin(ang);
+    const mtx = new DOMMatrix([c * len, si * len, -si * wid, c * wid, at.x - B.x, at.y - B.y]);
+    shades[Math.floor(r5 * 2.99)].addPath(LEAF, mtx); hi.addPath(LEAF_HI, mtx);
+    count++;
+    if (r2 > 0.55) {
+      const a2 = ang - side * 0.9, l2 = len * 0.8, c2 = Math.cos(a2), s2 = Math.sin(a2);
+      const m2 = new DOMMatrix([c2 * l2, s2 * l2, -s2 * wid * 0.9, c2 * wid * 0.9, at.x - B.x, at.y - B.y]);
+      shades[Math.floor(r4 * 2.99)].addPath(LEAF, m2); hi.addPath(LEAF_HI, m2);
+    }
+  }
+  if (!count) return;
+  const ls = lessonsOf(n).filter((l) => l.state === 'mastered');
+  v.fol = { shades, hi, popT: Math.min(...ls.map((l) => l.v.popT ?? 0)) - 0.25 };
+}
+
+// ───────────────────────── Roots (history) ─────────────────────────
+let rootSegs = [], rootTips = [], rootsBox = null, rootsAll = null;
+function buildRoots() {
+  const st = graph.stats();
+  const rr = mulberry32(1203);
+  rootSegs = []; rootTips = [];
+  const MAIN = 7, days = st.days;
+  const per = Array.from({ length: MAIN }, () => Math.floor(days / MAIN));
+  for (let i = 0, left = days - per.reduce((a, b) => a + b, 0); left > 0; i = (i + 2) % MAIN, left--) per[(MAIN >> 1) + ((i % 3) - 1)]++;
+  const thick = 0.55 + 0.8 * (st.mastered / st.total);
+  const baseLen = 24 + days * 0.6;
+  function grow(start, ang, L, tips, depth, parent, gs) {
+    const endAng = ang * 0.8 + (rr() - 0.5) * 0.3;
+    const d0 = P2(Math.sin(ang), Math.cos(ang)), d1 = P2(Math.sin(endAng), Math.cos(endAng));
+    const end = add(start, mul(norm(add(d0, d1)), L));
+    const w0 = 2.2 * Math.sqrt(tips) * thick + 0.7, w1 = tips > 1 ? 2.2 * Math.sqrt(tips / 2) * thick * 1.02 + 0.5 : 0.55;
+    const P = [start, add(start, mul(d0, L * 0.4)), sub(end, mul(d1, L * 0.34)), end];
+    const gd = depth === 0 ? 0.85 : 0.55;
+    const seg = { P, w0, w1, flare: 0, collar: 0, baseCap: depth > 0, parent, gs, gd, B: start, depth, alive: true, M: [1, 0, 0, 1, 0, 0] };
+    buildBranchPath(seg, depth === 0 ? 18 : 12);
+    rootSegs.push(seg);
+    if (tips > 1 && depth < 6) {
+      const a = Math.ceil(tips / 2), b = tips - a, spread = (24 + rr() * 16) * DEG, fork = bez(P, 0.92);
+      grow(fork, endAng - spread * 0.55, L * (0.6 + rr() * 0.1), a, depth + 1, seg, gs + gd * 0.75);
+      grow(fork, endAng + spread * 0.55, L * (0.6 + rr() * 0.1), b, depth + 1, seg, gs + gd * 0.75);
+    } else rootTips.push({ seg, p: end });
+  }
+  for (let i = 0; i < MAIN; i++) {
+    const f = (i / (MAIN - 1)) * 2 - 1;
+    const ang = f * 80 * DEG + (rr() - 0.5) * 8 * DEG;
+    const L = baseLen * (0.72 + 0.55 * Math.abs(f)) * (0.9 + rr() * 0.2);
+    grow(P2(f * 17, -4), ang, L, per[i], 0, null, 0.3 + Math.abs(f) * 0.18 + rr() * 0.1);
+  }
+  rootsAll = new Path2D();
+  for (const s of rootSegs) rootsAll.addPath(s.path, new DOMMatrix([1, 0, 0, 1, s.B.x, s.B.y]));
+  let x0 = Infinity, x1 = -Infinity, y1 = 0;
+  for (const s of rootSegs) for (const p of s.pts) { x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }
+  rootsBox = { x0: x0 - 8, y0: -24, x1: x1 + 8, y1: y1 + 8 };
+  const sorted = [...rootTips].sort((a, b) => b.p.y - a.p.y);
+  const first = graph.journey().filter((l) => l.state === 'mastered')[0];
+  rootTips.forEach((t) => (t.label = null));
+  if (sorted.length > 2) {
+    sorted[0].label = ['Day 1', first ? first.label : ''];
+    sorted[sorted.length - 1].label = ['Today', `Day ${days}`];
+  }
+}
+
+// ───────────────────────── Canvas + camera ─────────────────────────
+const bgC = document.getElementById('bg'), blurC = document.getElementById('blur'), crisp = document.getElementById('crisp');
+const gx = bgC.getContext('2d'), bx = blurC.getContext('2d'), cx = crisp.getContext('2d');
+const BLUR_RES = 0.5;
+let W = 0, H = 0, DPR = 1, BG_RES = 1, VP = { x: 0, y: 0, w: 1, h: 1 };
+let skyCache = null;
+function resize() {
+  W = innerWidth; H = innerHeight; DPR = Math.min(devicePixelRatio || 1, 2); BG_RES = Math.min(DPR, 1.5);
+  crisp.width = Math.round(W * DPR); crisp.height = Math.round(H * DPR);
+  blurC.width = Math.round(W * BLUR_RES); blurC.height = Math.round(H * BLUR_RES);
+  bgC.width = Math.round(W * BG_RES); bgC.height = Math.round(H * BG_RES);
+  // Static sky + sun, cached once per size.
+  skyCache = document.createElement('canvas'); skyCache.width = bgC.width; skyCache.height = bgC.height;
+  const g = skyCache.getContext('2d'); g.scale(BG_RES, BG_RES);
+  const sky = g.createLinearGradient(0, 0, 0, H);
+  sky.addColorStop(0, '#8FD5FB'); sky.addColorStop(0.55, '#C6ECFF'); sky.addColorStop(1, '#E6F7FF');
+  g.fillStyle = sky; g.fillRect(0, 0, W, H);
+  const sxp = W * 0.86, syp = Math.max(56, H * 0.12), hr = 120;
+  const halo = g.createRadialGradient(sxp, syp, 0, sxp, syp, hr);
+  halo.addColorStop(0, 'rgba(255,253,230,0.7)'); halo.addColorStop(1, 'rgba(255,253,230,0)');
+  g.fillStyle = halo; g.fillRect(sxp - hr, syp - hr, hr * 2, hr * 2);
+  g.fillStyle = '#FFFEF2'; g.beginPath(); g.arc(sxp, syp, 24, 0, TAU); g.fill();
+  if (SHAPE && shapeFor(W, H) !== SHAPE) relayout();
+  frameCache.clear();
+}
+addEventListener('resize', resize);
+
+// Safe zones: the status pill, the dock, the music button, the lesson card, a visible caption/hint.
+let zones = [];
+function readZones() {
+  zones = [];
+  const add = (el, pad = 8) => { if (!el) return; const r = el.getBoundingClientRect(); if (r.width && r.height) zones.push([r.left - pad, r.top - pad, r.right + pad, r.bottom + pad]); };
+  add(hudEl); add(document.querySelector('.kg-dock')); add(document.querySelector('.kg-sound'));
+  if (card.lesson) add(card.el);
+  if (hintState === 1) add(hintEl);
+  if (!skipEl.hidden) add(skipEl);
+  const cap = document.querySelector('.kg-caption.show'); if (cap) add(cap);
+}
+function viewport() {
+  const narrow = W < 640;
+  const m = narrow ? 12 : 24;
+  const top = 16 + 40 + 8;                                    // below the status pill
+  let bottom = 16 + 40 + 8;                                   // above the dock + music button
+  let right = m;
+  document.body.classList.toggle('card-open', !!card.lesson && W >= 900);
+  if (card.lesson) {
+    const r = card.el.getBoundingClientRect();
+    if (W >= 900) right = W - r.left + 8; else bottom = H - r.top + 8;
+  }
+  return { x: m, y: top, w: Math.max(80, W - m - right), h: Math.max(80, H - top - bottom) };
+}
+const cam = { x: 0, y: -300, z: 1 };
+const camV = { x: 0, y: 0, z: 0 };
+let OX = 0, OY = 0; // world → CSS px offset (screen = O + world * z)
+const sx = (x) => OX + x * cam.z, sy = (y) => OY + y * cam.z;
+function camMatrix(res) { return [res * cam.z, 0, 0, res * cam.z, res * OX, res * OY]; }
+function mm(A, B, out) {
+  const a = A[0] * B[0] + A[2] * B[1], b = A[1] * B[0] + A[3] * B[1], c = A[0] * B[2] + A[2] * B[3], d = A[1] * B[2] + A[3] * B[3];
+  const e = A[0] * B[4] + A[2] * B[5] + A[4], f = A[1] * B[4] + A[3] * B[5] + A[5];
+  out[0] = a; out[1] = b; out[2] = c; out[3] = d; out[4] = e; out[5] = f; return out;
+}
+const TMP = [1, 0, 0, 1, 0, 0], LOC = [1, 0, 0, 1, 0, 0];
+function setT(ctx, cm, M) { mm(cm, M, TMP); ctx.setTransform(TMP[0], TMP[1], TMP[2], TMP[3], TMP[4], TMP[5]); }
+const apply = (M, x, y) => P2(M[0] * x + M[2] * y + M[4], M[1] * x + M[3] * y + M[5]);
+
+// ───────────────────────── Labels: one spec drives both framing and drawing ─────────────────────────
+function wrap(ctx, text, maxW, maxLines = 2) {
+  const words = text.split(' '), lines = [];
+  let line = '';
+  for (const w of words) {
+    const test = line ? line + ' ' + w : w;
+    if (ctx.measureText(test).width <= maxW || !line) line = test; else { lines.push(line); line = w; }
+  }
+  if (line) lines.push(line);
+  if (lines.length > maxLines) { lines.length = maxLines; lines[maxLines - 1] = lines[maxLines - 1].replace(/\s*\S*$/, '') + '…'; }
+  return lines;
+}
+const measured = new Map();
+function measure(title, sub, maxW, dot, small) {
+  const key = title + '|' + (sub || '') + '|' + maxW + '|' + (dot ? 1 : 0) + (small ? 's' : '');
+  let m = measured.get(key);
+  if (!m) {
+    cx.font = small ? F_SMALL : F_NAME;
+    const lines = wrap(cx, title, maxW), widths = lines.map((l) => cx.measureText(l).width);
+    let w = Math.max(...widths), sw = 0;
+    if (sub) { cx.font = F_SUB; sw = cx.measureText(sub).width; w = Math.max(w, sw); }
+    const lh = small ? LH_SMALL : LH_NAME;
+    m = { lines, widths, sw, lh, font: small ? F_SMALL : F_NAME, w: w + (dot ? 16 : 0), h: lh * lines.length + (sub ? LH_SUB : 0), dot: !!dot };
+    measured.set(key, m);
+  }
+  return m;
+}
+// Box (px, relative to the anchor) for a label pushed `gap` px along `dir`.
+function relBox(dir, gap, m) {
+  const ax = dir.x * gap, ay = dir.y * gap;
+  const left = dir.x > 0.34 ? ax : dir.x < -0.34 ? ax - m.w : ax - m.w / 2;
+  const top = dir.y > 0.34 ? ay : dir.y < -0.34 ? ay - m.h : ay - m.h / 2;
+  return [left, top, left + m.w, top + m.h];
+}
+const fmtDate = (d) => d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+function lessonSub(l) {
+  if (l.state === 'mastered') return l.masteredAt ? `Grown ${fmtDate(l.masteredAt)}` : 'Grown';
+  return l.state === 'frontier' ? 'Ready' : 'Not yet';
+}
+const narrowLabels = () => W < 640;
+// World anchor + px gap for each label family. `live` uses the swayed positions.
+function domainLabelSpec(d) {
+  if (SHAPE === 'tall') return { wx: d.v.crown.x, wy: d.v.crown.y, dir: P2(0, 0), gap: 0, title: d.label, maxW: 110, dot: PAL[d.label].hue, inside: true };
+  const p = polar(d.v.ac, d.v.maxR + LEAF_R + 4);
+  return { wx: p.x, wy: p.y, dir: dirOf(d.v.ac), gap: 8, title: d.label, maxW: 200, dot: PAL[d.label].hue };
+}
+function topicLabelSpec(t, live) {
+  if (isSpine(t)) {
+    const tipL = t.children[t.children.length - 1], d = dirOf(t.v.ac);
+    const wx = (live ? tipL.v.wx : tipL.v.tip.x) + d.x * LEAF_R * 1.3, wy = (live ? tipL.v.wy : tipL.v.tip.y) + d.y * LEAF_R * 1.3;
+    return { wx, wy, dir: d, gap: 6, title: t.label, maxW: narrowLabels() ? 96 : 128, small: narrowLabels() };
+  }
+  // A topic of sub-branches: label its own stem, beside the wood (never on it).
+  const at = atArc(t.v.pts, t.v.len * 0.55), nrm = norm(P2(at.tan.y, -at.tan.x)), up = nrm.y <= 0 ? nrm : mul(nrm, -1);
+  const p = live ? apply(t.v.M, at.x - t.v.B.x, at.y - t.v.B.y) : P2(at.x, at.y);
+  const off = t.v.w0 * 0.5 + 2;
+  return { wx: p.x + up.x * off, wy: p.y + up.y * off, dir: up, gap: 6, title: t.label, maxW: narrowLabels() ? 110 : 150, small: narrowLabels() };
+}
+function lessonLabelSpec(l, live) {
+  const v = l.v, r = LEAF_R * (l.state === 'frontier' ? 1.2 : 1.05);
+  const tx = live ? v.wx : v.tip.x, ty = live ? v.wy : v.tip.y;
+  return { wx: tx + v.lblDir.x * r, wy: ty + v.lblDir.y * r, dir: v.lblDir, gap: 6, title: l.label, sub: lessonSub(l), maxW: narrowLabels() ? 112 : 150 };
+}
+function labelSetFor(n, live = false) {
+  if (n === root) return domains.map((d) => domainLabelSpec(d)).filter((s) => !s.inside);
+  if (n.isRoots) return rootTips.filter((t) => t.label).map((t) => ({ wx: t.p.x, wy: t.p.y, dir: P2(1, 0.4), gap: 8, title: t.label[0], sub: t.label[1], maxW: 200 }));
+  if (n.depth === 1) return n.children.flatMap((t) => (isSpine(t) ? [topicLabelSpec(t, live)] : [topicLabelSpec(t, live), ...t.children.map((s) => topicLabelSpec(s, live))]));
+  return lessonsOf(n).map((l) => lessonLabelSpec(l, live));
+}
+
+// ───────────────────────── Framing ─────────────────────────
+// A frame fits the node's world box AND its labels (px-sized), with 16px margins; cached per viewport.
+const frameCache = new Map();
+let stateVersion = 0;
+function frameFor(n) {
+  const key = (n.isRoots ? 'roots' : n.id) + '|' + VP.x + ',' + VP.y + ',' + VP.w + ',' + VP.h + '|' + stateVersion;
+  let f = frameCache.get(key);
+  if (f) return f;
+  let b;
+  if (n === root) { const t = root.v.box; b = { x0: Math.min(t.x0, rootsBox.x0), y0: t.y0, x1: Math.max(t.x1, rootsBox.x1), y1: rootsBox.y1 }; }
+  else if (n.isRoots) b = { x0: rootsBox.x0, y0: SHAPE === 'tall' ? -TRUNK_H * 0.8 : -70, x1: rootsBox.x1, y1: rootsBox.y1 + 24 };
+  else b = n.v.box;
+  const specs = labelSetFor(n).map((s) => ({ s, m: measure(s.title, s.sub, s.maxW, s.dot, s.small) }));
+  const margin = 16, zmax = 3.2;
+  let z = Math.min(VP.w / (b.x1 - b.x0), VP.h / (b.y1 - b.y0));
+  let x0, y0, x1, y1;
+  for (let it = 0; it < 4; it++) {
+    x0 = b.x0; y0 = b.y0; x1 = b.x1; y1 = b.y1;
+    for (const { s, m } of specs) {
+      const r = relBox(s.dir, s.gap, m);
+      x0 = Math.min(x0, s.wx + r[0] / z); x1 = Math.max(x1, s.wx + r[2] / z);
+      y0 = Math.min(y0, s.wy + r[1] / z); y1 = Math.max(y1, s.wy + r[3] / z);
+    }
+    z = Math.min((VP.w - 2 * margin) / (x1 - x0), (VP.h - 2 * margin) / (y1 - y0), zmax);
+  }
+  f = { x: (x0 + x1) / 2, y: (y0 + y1) / 2, z: Math.max(0.05, z) };
+  if (n.isRoots && SHAPE !== 'tall') { const slack = (VP.h - 2 * margin) / z - (y1 - y0); if (slack > 0) f.y += slack * 0.32; }
+  if (frameCache.size > 200) frameCache.clear();
+  frameCache.set(key, f);
+  return f;
+}
+const blendF = (a, b, t) => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, z: a.z * Math.pow(b.z / a.z, t) });
+
+// ───────────────────────── State ─────────────────────────
+let focus = root;
+let leanNode = null, leanType = null, hoverLeaf = null, forcedHover = null, hoverPill = false;
+let pending = null, lockUntil = 0, clock = performance.now(), time = 0;
+const pointer = { x: 0, y: 0, in: false, overUI: false, lastMoveAt: 0, travel: 0, sim: false, move: 0, dirX: 0, dirY: 0, usedMove: -1 };
+const DWELL = { in: 90, out: 140, side: 220, roots: 300 };
+const SETTLE_MS = 320, COMMIT_TRAVEL = 40;
+const LEAN = { in: 0.45, out: 0.3, side: 0.28, roots: 0.4 };
+const CAM_FREQ = reduceMotion ? 40 : 15;        // critically damped, ~0.3s to settle
+
+let begun = false, introStart = 0, introT = 0, introDone = false, introSkipped = false;
+const INTRO_END = 7.0;
+const T_SKIP = Q.has('t') ? parseFloat(Q.get('t')) || 0 : 0;
+let It = 0, Iv = 0, Irate = 0.3;    // local intensity mirror (drives wind + petals)
+function setI(v, secs = 4) { It = clamp(v, 0, 1); Irate = 1 / Math.max(0.05, secs); score.setIntensity(v, secs); }
+
+function relayout() {
+  setShape(shapeFor(innerWidth, innerHeight));
+  layout(); computeMeta(); buildTree();
+  frameCache.clear(); measured.clear();
+}
+setShape(shapeFor(innerWidth, innerHeight));
+layout();
+computeMeta();
+buildTree();
+buildRoots();
+resize();
+const surface = (x) => -12 * Math.exp(-((x / 230) ** 2)) + 2.2 * Math.sin(x / 83) + 1.2 * Math.sin(x / 31 + 1.3);
+
+// ───────────────────────── Pointer navigation ─────────────────────────
+const navReady = () => introDone && !card.lesson;
+function crownScreen(n) { const c = n.v.crown; return { x: sx(c.x), y: sy(c.y), r: c.r * cam.z }; }
+function baseScreen(n) { const p = apply(n.v.M, 0, 0); return { x: sx(p.x), y: sy(p.y) }; }
+const ancestors = (n) => { const a = []; for (let p = n.parent; p; p = p.parent) a.push(p); return a; };
+function inSub(n, F) { for (let a = n; a; a = a.parent) if (a === F) return true; return false; }
+
+function setFocus(n, how = 'pointer') {
+  if (!n || n === focus || (!n.isRoots && !n.children.length)) return;
+  const deeper = n.isRoots || (n.depth > focus.depth && inSub(n, focus));
+  focus = n;
+  lockUntil = clock + (reduceMotion ? 120 : SETTLE_MS);
+  pointer.travel = 0; pending = null;
+  if (card.lesson && (n.isRoots || !inSub(card.lesson, n))) card.close();
+  hideHint();
+  sfx(how === 'back' ? 'back' : deeper ? 'zoomIn' : 'zoomOut');
+  setI(n.isRoots ? 0.32 : 0.42 + 0.07 * Math.min(3, n.depth), 2.5);
+}
+const goBack = () => { if (focus !== root) setFocus(focus.isRoots ? root : focus.parent, 'back'); };
+
+function evalPointer() {
+  if (!pointer.in || pointer.overUI || !navReady()) return null;
+  const F = focus;
+  let best = null;
+  const consider = (node, type, inside, p) => {
+    const prio = { in: 0.5, roots: 0.45, side: 0.2, out: 0.1 }[type];
+    const sc = inside ? 10 + prio : p;
+    if (sc > 0.001 && (!best || sc > best.score)) best = { node, type, inside, p, score: sc };
+  };
+  const fc = F.isRoots ? { x: W / 2, y: H / 2 } : F === root ? { x: sx(O.x), y: sy(O.y) } : crownScreen(F);
+  const gyS = sy(0);
+  if (F === root) {
+    for (const d of domains) {
+      const s = crownScreen(d), dd = Math.hypot(pointer.x - s.x, pointer.y - s.y), gap = dd - s.r;
+      consider(d, 'in', gap <= 0, 1 - clamp(gap / Math.max(72, Math.hypot(s.x - fc.x, s.y - fc.y) * 0.75), 0, 1));
+    }
+    const inside = pointer.y > gyS + 24 && pointer.x > sx(rootsBox.x0) && pointer.x < sx(rootsBox.x1);
+    consider(ROOTS, 'roots', inside, inside ? 1 : 1 - clamp((gyS + 24 - pointer.y) / 80, 0, 1) * 1.0001);
+  } else if (!F.isRoots) {
+    for (const c of F.children) {
+      if (!c.children.length) continue;
+      const s = crownScreen(c), dd = Math.hypot(pointer.x - s.x, pointer.y - s.y), gap = dd - s.r * 0.9;
+      consider(c, 'in', gap <= 0, 1 - clamp(gap / Math.max(64, Math.hypot(s.x - fc.x, s.y - fc.y) * 0.75), 0, 1));
+    }
+  }
+  // Hovering inside the focused branch's own crown never pulls sideways or out (only the pill does).
+  const fcr = F !== root && !F.isRoots ? crownScreen(F) : null;
+  const inOwn = !!fcr && Math.hypot(pointer.x - fcr.x, pointer.y - fcr.y) < fcr.r * 0.85;
+  const towardChild = (!!best && best.p > 0.05) || inOwn;
+  if (F.isRoots) consider(root, 'out', pointer.y < gyS - 32, 0);
+  else if (F !== root) {
+    let child = F;
+    const pill = backPill();
+    for (const A of ancestors(F)) {
+      const s = A === F.parent ? { x: pill.px, y: pill.py } : baseScreen(child), rad = Math.max(56, Math.min(W, H) * 0.1);
+      let inside = Math.hypot(pointer.x - s.x, pointer.y - s.y) <= (inOwn ? 32 : rad);
+      if (A === root) {
+        // The trunk itself, and the ground, also mean "whole tree".
+        const tb = apply(root.v.M, 0, -TRUNK_H * 0.5), ts = { x: sx(tb.x) };
+        if (Math.abs(pointer.x - ts.x) < Math.max(40, root.v.w0 * cam.z) && pointer.y > sy(-TRUNK_H * 0.9)) inside = true;
+        if (pointer.y > gyS - 6) inside = true;
+      }
+      if (inside || !towardChild) consider(A, 'out', inside, inside ? 1 : 0);
+      child = A;
+    }
+    if (F.parent) for (const s of F.parent.children) {
+      if (s === F || !s.children.length || s.v.vis < 0.2) continue;
+      const c = crownScreen(s);
+      if (c.x < -c.r * 0.5 || c.x > W + c.r * 0.5 || c.y < -c.r * 0.5 || c.y > H + c.r * 0.5) continue;
+      const dd = Math.hypot(pointer.x - c.x, pointer.y - c.y);
+      const own = fcr ? Math.hypot(pointer.x - fcr.x, pointer.y - fcr.y) / fcr.r : 9;
+      if (dd <= c.r * 0.8 && !towardChild && dd / c.r < own) consider(s, 'side', true, 1);
+    }
+  }
+  return best;
+}
+
+// Snap to the nearest bud/leaf within a generous radius; buds win ties; the current hover is sticky.
+function findHoverLeaf() {
+  // Leaves answer to hover once you've zoomed in; the overview stays calm.
+  if (!pointer.in || pointer.overUI || !introDone || card.lesson || focus === root || focus.isRoots) return null;
+  let best = null, bd = Infinity;
+  for (const l of leaves) {
+    const s = l.v.scr;
+    if (!s || s.r < 6 || l.v.vis * l.v.sharp < 0.45 || lessonPop(l) < 0.5) continue;
+    const reach = Math.max(22, s.r * 1.5) * (l === hoverLeaf ? 1.35 : 1);
+    const d = Math.hypot(pointer.x - s.x, pointer.y - s.y);
+    if (d > reach) continue;
+    const score = d * (l.state === 'frontier' ? 0.75 : 1) * (l === hoverLeaf ? 0.8 : 1);
+    if (score < bd) { bd = score; best = l; }
+  }
+  return best;
+}
+function overPill() {
+  if (!introDone || focus === root || !pointer.in || pointer.overUI) return false;
+  const p = backPill();
+  return Math.abs(pointer.x - p.px) <= p.w / 2 + 6 && Math.abs(pointer.y - p.py) <= p.h / 2 + 6;
+}
+
+function handlePointer(now) {
+  if (pointer.overUI) {
+    // Over the dock, card or status: hold everything still.
+    if (hoverLeaf) { hoverLeaf = null; updateTip(); }
+    crisp.style.cursor = 'default';
+    return;
+  }
+  const hit = evalPointer();
+  leanNode = hit ? hit.node : null;
+  leanType = hit ? hit.type : null;
+  for (const n of nodes) n.v.tProx = 0;
+  ROOTS.v.tProx = 0;
+  if (leanNode) leanNode.v.tProx = hit.inside ? 1 : smooth(clamp(hit.p, 0, 1));
+  const prevHover = hoverLeaf;
+  hoverLeaf = forcedHover || findHoverLeaf();
+  if (hoverLeaf && hoverLeaf !== prevHover && !forcedHover && now - pointer.lastMoveAt < 120) sfx('hover');   // only for the hand, not the camera
+  hoverPill = overPill();
+  // Zooms are driven by the hand, not the camera: a branch that slides under a still pointer never
+  // commits, and after each zoom the hand has to travel again (one level per deliberate move).
+  const commit = hit && hit.inside && navReady() && !hoverPill;
+  if (commit && now >= lockUntil) {
+    // A target the hand moved into commits after a short glide; a target that the zoom slid under
+    // a resting hand needs a much longer, deliberate move first (no accidental cascades).
+    if (!pending || pending.node !== hit.node) pending = { node: hit.node, since: now, t0: pointer.travel, fresh: pointer.travel > 6 };
+    const moved = pointer.travel - pending.t0;
+    const armed = (pointer.sim || (pending.fresh ? moved >= 24 && pointer.travel >= COMMIT_TRAVEL : moved >= 160)) && pointer.lastMoveAt >= pending.since - 300;
+    // One level per deliberate move: the gesture that just zoomed can't zoom again.
+    if (armed && pointer.move !== pointer.usedMove && now - pending.since >= DWELL[hit.type]) { pointer.usedMove = pointer.move; setFocus(hit.node); }
+  } else pending = null;
+  const clickable = hoverLeaf || hoverPill || (hit && hit.inside && (hit.type === 'in' || hit.type === 'roots'));
+  crisp.style.cursor = clickable ? 'pointer' : 'default';
+  updateTip();
+}
+
+// ───────────────────────── Visibility targets ─────────────────────────
+function computeTargets() {
+  const F = focus.isRoots ? root : focus;
+  const fPath = new Set(graph.pathTo(F));
+  for (const n of order) {
+    const v = n.v;
+    if (F === root || fPath.has(n) || inSub(n, F)) { v.tVis = 1; v.tSharp = 1; }
+    else {
+      // Siblings stay as faint, soft context; the focused branch is the hero.
+      let a = n; while (a.parent && !fPath.has(a.parent)) a = a.parent;
+      const near = a.parent === F.parent;
+      v.tVis = near ? 0.42 : 0.3; v.tSharp = 0;
+    }
+  }
+  if (focus.isRoots) for (const n of order) { n.v.tVis = n === root ? 1 : 0.5; n.v.tSharp = n === root ? 1 : 0; }
+  const p = leanNode ? leanNode.v.prox : 0;
+  if (leanNode && leanType === 'in') {
+    for (const c of F.children) {
+      if (c === leanNode) continue;
+      for (const n of subtree(c)) { n.v.tSharp *= 1 - 0.6 * p; n.v.tVis *= 1 - 0.35 * p; }
+    }
+  } else if (leanNode && (leanType === 'out' || leanType === 'side') && !leanNode.isRoots) {
+    for (const n of subtree(leanNode)) { n.v.tSharp = Math.max(n.v.tSharp, 0.85 * p); n.v.tVis = Math.max(n.v.tVis, 0.7 + 0.3 * p); }
+  }
+}
+const subCache = new Map();
+function subtree(n) {
+  let s = subCache.get(n);
+  if (!s) { s = nodes.filter((m) => inSub(m, n)); subCache.set(n, s); }
+  return s;
+}
+
+function animate(dt) {
+  const kV = 1 - Math.exp(-dt * (reduceMotion ? 30 : 12));
+  const kP = 1 - Math.exp(-dt * 18);
+  const kH = 1 - Math.exp(-dt * 30);
+  for (const n of nodes) {
+    const v = n.v;
+    v.vis += (v.tVis - v.vis) * kV; v.sharp += (v.tSharp - v.sharp) * kV;
+    v.prox += (v.tProx - v.prox) * kP;
+    v.hl += ((n === hoverLeaf ? 1 : 0) - v.hl) * kH;
+    v.damp += ((n === hoverLeaf ? 0.12 : 1) - v.damp) * kH;   // a hovered twig holds still under the cursor
+    v.fT += ((n === focus ? 1 : 0) - v.fT) * kV;
+  }
+  ROOTS.v.prox += (ROOTS.v.tProx - ROOTS.v.prox) * kP;
+  ROOTS.v.fT += ((focus === ROOTS ? 1 : 0) - ROOTS.v.fT) * kV;
+  let target;
+  if (!introDone) target = introCam(frameFor(root));
+  else {
+    target = frameFor(focus);
+    if (leanNode && leanNode.v.prox > 0.001) target = blendF(target, frameFor(leanNode), LEAN[leanType] * leanNode.v.prox);
+  }
+  const w = introDone ? CAM_FREQ : reduceMotion ? 40 : 4.2;
+  const tz = Math.log(target.z), steps = Math.max(1, Math.ceil(dt * 240)), h = dt / steps;
+  let lz = Math.log(cam.z);
+  for (let i = 0; i < steps; i++) {
+    camV.x += (w * w * (target.x - cam.x) - 2 * w * camV.x) * h; cam.x += camV.x * h;
+    camV.y += (w * w * (target.y - cam.y) - 2 * w * camV.y) * h; cam.y += camV.y * h;
+    camV.z += (w * w * (tz - lz) - 2 * w * camV.z) * h; lz += camV.z * h;
+  }
+  cam.z = Math.exp(lz);
+  OX = VP.x + VP.w / 2 - cam.x * cam.z; OY = VP.y + VP.h / 2 - cam.y * cam.z;
+}
+
+function introCam(base) {
+  const t = introT;
+  const K = [
+    [0, { x: 0, y: -6, z: base.z * 3.6 }],
+    [1.3, { x: 0, y: 30, z: base.z * 2.4 }],
+    [2.6, { x: 0, y: -170, z: base.z * 1.55 }],
+    [4.4, { x: base.x, y: base.y - 40, z: base.z * 1.12 }],
+    [6.9, base],
+  ];
+  if (t <= 0) return K[0][1];
+  for (let i = 1; i < K.length; i++) if (t <= K[i][0]) { const a = K[i - 1], b = K[i]; return blendF(a[1], b[1], smooth((t - a[0]) / (b[0] - a[0]))); }
+  return base;
+}
+
+// ───────────────────────── Wind, sway, matrices ─────────────────────────
+let wind = 0, gust = 0, gustV = 0, windT = 0;
+function updateWind(dt) {
+  if (Iv !== It) { const d = It - Iv, mv = Irate * dt; Iv = Math.abs(d) <= mv ? It : Iv + Math.sign(d) * mv; }
+  const target = reduceMotion ? 0 : 0.3 + 0.8 * Iv;
+  wind += (target - wind) * (1 - Math.exp(-dt * 1.5));
+  windT += dt * (0.7 + 0.5 * Iv);
+  const gTarget = reduceMotion ? 0 : (Math.sin(windT * 0.37) * 0.6 + Math.sin(windT * 0.91 + 2) * 0.4) * (0.25 + 0.8 * Iv);
+  gustV += (gTarget - gust) * dt * 2.2; gustV *= Math.exp(-dt * 1.8); gust = clamp(gust + gustV * dt * 3, -1.2, 1.2);
+}
+const growOf = (v) => (introDone ? 1 : easeOut(prog(introT, v.gs, v.gd)));
+function updateMatrices() {
+  for (const n of order) {
+    const v = n.v, g = growOf(v);
+    const sw = v.damp * (wind * v.amp * (Math.sin(windT * v.f * 2.2 + v.phs) + 0.45 * Math.sin(windT * v.f * 5.1 + v.phs * 1.7)) + gust * v.amp * 2.2);
+    const c = Math.cos(sw) * g, s = Math.sin(sw) * g;
+    if (!n.parent) { v.M[0] = c; v.M[1] = s; v.M[2] = -s; v.M[3] = c; v.M[4] = v.B.x; v.M[5] = v.B.y; }
+    else {
+      const pv = n.parent.v;
+      LOC[0] = c; LOC[1] = s; LOC[2] = -s; LOC[3] = c; LOC[4] = v.B.x - pv.B.x; LOC[5] = v.B.y - pv.B.y;
+      mm(pv.M, LOC, v.M);
+    }
+    v.g = g;
+  }
+  for (const s of rootSegs) {
+    const g = introDone ? 1 : easeOut(prog(introT, s.gs, s.gd));
+    s.g = g;
+    if (!s.parent) { s.M[0] = g; s.M[1] = 0; s.M[2] = 0; s.M[3] = g; s.M[4] = s.B.x; s.M[5] = s.B.y; }
+    else { LOC[0] = g; LOC[1] = 0; LOC[2] = 0; LOC[3] = g; LOC[4] = s.B.x - s.parent.B.x; LOC[5] = s.B.y - s.parent.B.y; mm(s.parent.M, LOC, s.M); }
+  }
+  // Hit-tests and labels use these swayed positions, so targets never slide out from under the cursor.
+  for (const l of leaves) {
+    const v = l.v, p = apply(v.M, v.tipL.x, v.tipL.y);
+    v.wx = p.x; v.wy = p.y;
+    v.scr = { x: sx(p.x), y: sy(p.y), r: LEAF_R * cam.z * Math.hypot(v.M[0], v.M[1]) };
+  }
+}
+
+// ───────────────────────── Background ─────────────────────────
+const rrBg = mulberry32(77);
+const clouds = Array.from({ length: 6 }, () => ({ x: rrBg() * 1.4 - 0.2, y: 0.06 + rrBg() * 0.36, s: 0.6 + rrBg() * 0.7, v: 3 + rrBg() * 5, sprite: makeCloud(rrBg) }));
+function makeCloud(r) {
+  const w = 360, h = 150, c = document.createElement('canvas'); c.width = w; c.height = h;
+  const g = c.getContext('2d');
+  const puffs = Array.from({ length: 9 }, (_, i) => ({ x: 60 + (i / 8) * 240 + (r() - 0.5) * 30, y: 92 - Math.sin((i / 8) * Math.PI) * (26 + r() * 22), r: 26 + Math.sin((i / 8) * Math.PI) * 26 + r() * 10 }));
+  g.fillStyle = '#E4F1FA';
+  for (const p of puffs) { g.beginPath(); g.arc(p.x, p.y + 6, p.r, 0, TAU); g.fill(); }
+  g.fillStyle = '#FFFFFC';
+  for (const p of puffs) { g.beginPath(); g.arc(p.x - 2, p.y - 1, p.r * 0.95, 0, TAU); g.fill(); }
+  g.globalCompositeOperation = 'destination-out';
+  g.fillRect(0, 118, w, h);
+  return c;
+}
+const tufts = (() => {
+  const r = mulberry32(9), p = new Path2D();
+  for (let x = -1900; x < 1900; x += 5 + r() * 7) {
+    const y = surface(x) + 1.5, h = 3 + r() * 5, lean = (r() - 0.4) * 4;
+    p.moveTo(x - 1.3, y); p.quadraticCurveTo(x + lean * 0.3, y - h * 0.6, x + lean, y - h); p.quadraticCurveTo(x + lean * 0.2 + 0.6, y - h * 0.5, x + 1.3, y); p.closePath();
+  }
+  return p;
+})();
+const strata = (() => {
+  const p = new Path2D();
+  for (let k = 0; k < 3; k++) {
+    const y0 = 70 + k * 80;
+    p.moveTo(-1900, y0);
+    for (let x = -1900; x <= 1900; x += 60) p.lineTo(x, y0 + Math.sin(x / 170 + k * 1.7) * 7 + Math.sin(x / 61 + k) * 2);
+  }
+  return p;
+})();
+let soilGrad = null, soilKey = '';
+function drawBackground() {
+  const g = gx, z = cam.z;
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.drawImage(skyCache, 0, 0);
+  g.setTransform(BG_RES, 0, 0, BG_RES, 0, 0);
+  for (const c of clouds) {
+    const k = W < 640 ? 0.6 : 1, w = 360 * c.s * k, h = 150 * c.s * k, span = W + w * 2;
+    const x = ((c.x * W + time * c.v - cam.x * z * 0.03) % span + span) % span - w;
+    g.globalAlpha = 0.9; g.drawImage(c.sprite, x, c.y * H - 30, w, h);
+  }
+  g.globalAlpha = 1;
+  const gyS = sy(0);
+  if (gyS < H + 160) {
+    // Two quiet hill layers on the horizon.
+    const hill = (amp, freq, par, col, off) => {
+      g.fillStyle = col; g.beginPath(); g.moveTo(-10, H + 10);
+      const shift = -cam.x * z * par;
+      for (let x = -10; x <= W + 10; x += 16) { const u = (x - shift) / (260 * freq); g.lineTo(x, gyS - amp * (0.55 + 0.3 * Math.sin(u + off) + 0.15 * Math.sin(u * 2.7 + off * 2))); }
+      g.lineTo(W + 10, H + 10); g.closePath(); g.fill();
+    };
+    const amp = 56 * Math.pow(z, 0.55);
+    hill(amp * 1.3, 1.6, 0.12, '#B4E0F1', 0.4);
+    hill(amp * 0.8, 1.0, 0.3, '#A6D9C2', 2.1);
+  }
+  if (gyS < H + 40) {
+    // Ground: a light, quiet cross-section that fades into the page; the roots carry the story.
+    const ptsTop = [];
+    for (let x = -16; x <= W + 16; x += 16) ptsTop.push([x, sy(surface((x - OX) / z))]);
+    g.beginPath(); g.moveTo(-16, H + 16);
+    for (const [x, y] of ptsTop) g.lineTo(x, y);
+    g.lineTo(W + 16, H + 16); g.closePath();
+    const key = Math.round(gyS) + '|' + z.toFixed(3);
+    if (key !== soilKey) {
+      soilKey = key;
+      soilGrad = g.createLinearGradient(0, gyS, 0, gyS + Math.max(80, (rootsBox.y1 + 90) * z));
+      soilGrad.addColorStop(0, '#E2E7EC'); soilGrad.addColorStop(0.55, '#ECEFF3'); soilGrad.addColorStop(1, '#F4F6F8');
+    }
+    g.fillStyle = soilGrad; g.fill();
+    g.save(); g.setTransform(BG_RES * z, 0, 0, BG_RES * z, BG_RES * OX, BG_RES * OY);
+    g.strokeStyle = 'rgba(83, 106, 134, 0.08)'; g.lineWidth = 1.5; g.stroke(strata);
+    g.restore();
+    const band = Math.max(3, 9 * z);
+    g.beginPath();
+    ptsTop.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y)));
+    for (let i = ptsTop.length - 1; i >= 0; i--) g.lineTo(ptsTop[i][0], ptsTop[i][1] + band);
+    g.closePath();
+    g.fillStyle = '#3FA669'; g.fill();
+    g.save(); g.setTransform(BG_RES * z, 0, 0, BG_RES * z, BG_RES * OX, BG_RES * OY);
+    g.fillStyle = '#56B57B'; g.fill(tufts);
+    g.restore();
+  }
+}
+
+// ───────────────────────── Particles (petals, rings) ─────────────────────────
+const petals = [], rings = [];
+let petalAcc = 0;
+const masteredLeaves = () => leaves.filter((l) => l.state === 'mastered' && l.v.g > 0.99);
+function spawnPetal(l, burst = false) {
+  const pal = PAL[l.domain.label];
+  const a = Math.random() * TAU, sp = burst ? 30 + Math.random() * 60 : 0;
+  petals.push({
+    x: l.v.wx, y: l.v.wy, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - (burst ? 24 : 0), rot: Math.random() * TAU, vr: (Math.random() - 0.5) * 4,
+    s: 2.4 + Math.random() * 1.4, col: Math.random() < 0.5 ? pal.petal : pal.hi, life: 0, rest: 0, flut: Math.random() * TAU,
+  });
+}
+function updateParticles(dt) {
+  if (!reduceMotion && introDone) {
+    petalAcc += (0.08 + 0.7 * Iv * Iv) * dt;
+    if (petalAcc >= 1) {
+      petalAcc = 0;
+      const pool = masteredLeaves();
+      if (pool.length && petals.length < 20) spawnPetal(pool[Math.floor(Math.random() * pool.length)]);
+    }
+  }
+  const wx = (12 + 36 * wind) * (0.6 + gust * 0.8);
+  for (let i = petals.length - 1; i >= 0; i--) {
+    const p = petals[i];
+    p.life += dt;
+    if (p.rest > 0) { p.rest += dt; if (p.rest > 1.8) petals.splice(i, 1); continue; }
+    p.vx += ((wx + Math.sin(p.life * 2.3 + p.flut) * 16) - p.vx) * dt * 1.6;
+    p.vy += ((15 + Math.cos(p.life * 3.1 + p.flut) * 9) - p.vy) * dt * 1.4;
+    p.x += p.vx * dt; p.y += p.vy * dt; p.rot += p.vr * dt;
+    const ground = surface(p.x) - 1;
+    if (p.y >= ground) { p.y = ground; p.rest = 0.001; }
+    if (p.life > 24 || Math.abs(p.x) > 2400) petals.splice(i, 1);
+  }
+  for (let i = rings.length - 1; i >= 0; i--) { rings[i].life += dt; if (rings[i].life > rings[i].max) rings.splice(i, 1); }
+}
+
+// ───────────────────────── Drawing ─────────────────────────
+function drawBranch(ctx, cm, v, alpha) {
+  if (alpha < 0.01 || !v.path || v.g < 0.002) return;
+  if (ctx === bx) blurUsed = true;
+  ctx.globalAlpha = alpha * (v.alive === false ? 0.85 : 1);
+  setT(ctx, cm, v.M);
+  ctx.fillStyle = barkFill(ctx, v);
+  ctx.fill(v.path);
+  if (v.grain && ctx === cx) { ctx.strokeStyle = 'rgba(40, 26, 16, 0.18)'; ctx.lineWidth = 1; ctx.stroke(v.grain); }
+}
+function drawFoliage(ctx, cm, n, alpha) {
+  const v = n.v, f = v.fol;
+  if (!f || alpha < 0.01 || v.g < 0.02) return;
+  const a = introDone ? 1 : prog(introT, f.popT, 1.1);
+  if (a <= 0) return;
+  if (ctx === bx) blurUsed = true;
+  const pal = PAL[n.domain.label].leaves;
+  setT(ctx, cm, v.M);
+  ctx.globalAlpha = alpha * a;
+  for (let i = 0; i < 3; i++) { ctx.fillStyle = pal[i]; ctx.fill(f.shades[i]); }
+  if (ctx === cx) { ctx.fillStyle = 'rgba(255,255,252,0.18)'; ctx.fill(f.hi); }
+}
+const nodeVisible = (v, pad) => { const s = v.scr; return !s || (s.x > -pad && s.y > -pad && s.x < W + pad && s.y < H + pad); };
+
+function lessonPop(l) {
+  const v = l.v;
+  if (l.state === 'locked') return v.g > 0.98 ? 1 : 0;
+  if (v.budAt != null) return easeBack(prog(time, v.budAt, 0.5));
+  if (introDone) return 1;
+  return easeBack(prog(introT, v.popT, 0.36));
+}
+let breathAt = -9;   // the whole canopy takes one breath when the intro completes
+function drawLesson(ctx, cm, l, alpha, now) {
+  const v = l.v;
+  if (alpha < 0.01 || v.g < 0.05) return;
+  const pop = lessonPop(l);
+  if (pop <= 0.001) return;
+  if (ctx === bx) blurUsed = true;
+  setT(ctx, cm, v.M);
+  ctx.translate(v.tipL.x, v.tipL.y);
+  ctx.globalAlpha = alpha;
+  const bt = time - breathAt, breath = bt > 0 && bt < 0.8 ? 1 + 0.07 * Math.sin(Math.PI * bt / 0.8) : 1;
+  const hs = (1 + 0.14 * v.hl) * breath;
+  const pal = PAL[l.domain.label];
+  if (l.state === 'mastered') {
+    const bloom = v.bloomAt != null ? prog(time, v.bloomAt, 0.6) : 1;
+    const burstS = v.bloomAt != null ? 1 + 0.35 * Math.sin(Math.PI * clamp((time - v.bloomAt) / 0.7, 0, 1)) : 1;
+    ctx.rotate(v.tipA);
+    const s = pop * hs, ls = easeOut(bloom);
+    for (const lf of v.cluster) {
+      ctx.save(); ctx.rotate(lf.a); ctx.translate(lf.lift, 0); ctx.scale(lf.len * s * ls, lf.wid * s * ls);
+      ctx.fillStyle = pal.leaves[lf.shade]; ctx.fill(LEAF);
+      if (ctx === cx) { ctx.fillStyle = 'rgba(255,255,252,0.2)'; ctx.fill(LEAF_HI); }
+      ctx.restore();
+    }
+    ctx.rotate(-v.tipA + v.blRot + Math.sin(windT * 1.3 + v.ph) * 0.06 * wind * v.damp);
+    const br = 7.4 * s * easeBack(bloom) * burstS;
+    if (br <= 0.01) return;
+    ctx.scale(br, br);
+    ctx.fillStyle = pal.petalEdge; ctx.fill(BLOSSOM);
+    ctx.scale(0.82, 0.82); ctx.fillStyle = pal.petal; ctx.fill(BLOSSOM);
+    ctx.scale(0.42, 0.42); ctx.fillStyle = C.sunShadow; ctx.fill(CIRCLE);
+    ctx.scale(0.7, 0.7); ctx.fillStyle = C.sun; ctx.fill(CIRCLE);
+  } else if (l.state === 'frontier') {
+    ctx.rotate(v.tipA + v.budTilt);
+    const pulse = reduceMotion || !introDone ? 0.5 : 0.5 + 0.5 * Math.sin(now / 1000 * 2.4 + v.ph);
+    const s = 10.5 * pop * hs * (1 + 0.04 * pulse);
+    ctx.fillStyle = '#3FA669';
+    for (const a of [-0.75, 0.75]) { ctx.save(); ctx.rotate(a); ctx.scale(s * 0.62, s * 0.5); ctx.fill(LEAF); ctx.restore(); }
+    ctx.save(); ctx.translate(s * 0.08, 0); ctx.scale(s, s);
+    ctx.fillStyle = C.sunShadow; ctx.save(); ctx.translate(0.03, 0.06); ctx.fill(BUD); ctx.restore();
+    ctx.fillStyle = C.sun; ctx.fill(BUD);
+    if (l.progress > 0) {
+      ctx.save(); ctx.translate(0.98, 0); ctx.scale(0.22 + 0.25 * l.progress, 0.22 + 0.25 * l.progress);
+      ctx.fillStyle = pal.petal; ctx.fill(BLOSSOM); ctx.restore();
+    }
+    ctx.lineWidth = 0.07; ctx.strokeStyle = C.sunShadow; ctx.stroke(BUD_SEAM);
+    ctx.restore();
+  } else {
+    const s = 1.7 * pop * (1 + 0.6 * v.hl);
+    ctx.scale(s, s); ctx.fillStyle = '#B2A396'; ctx.fill(CIRCLE);
+  }
+}
+
+// The only glow on screen: ready buds (what you can click).
+function drawHalos(ctx, res, now) {
+  for (const l of leaves) {
+    if (l.state !== 'frontier') continue;
+    const v = l.v, s = v.scr, pop = lessonPop(l);
+    const a = v.vis * (ctx === cx ? v.sharp : 1 - v.sharp) * pop;
+    if (a < 0.02 || !s || s.x < -60 || s.y < -60 || s.x > W + 60 || s.y > H + 60) continue;
+    const pulse = reduceMotion || !introDone ? 0.5 : 0.5 + 0.5 * Math.sin(now / 1000 * 2.4 + v.ph);
+    const r = Math.max(10, s.r * (1.15 + 0.15 * pulse)) * (1 + 0.2 * v.hl);
+    ctx.setTransform(res, 0, 0, res, 0, 0);
+    const g = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, r);
+    g.addColorStop(0, `rgba(255, 250, 170, ${0.75 * a})`); g.addColorStop(0.4, `rgba(255, 244, 78, ${(0.34 + 0.2 * pulse) * a})`); g.addColorStop(1, 'rgba(255, 244, 78, 0)');
+    ctx.globalAlpha = 1; ctx.fillStyle = g; ctx.beginPath(); ctx.arc(s.x, s.y, r, 0, TAU); ctx.fill();
+  }
+}
+
+function drawRoots() {
+  if (sy(0) > H + 20 || sy(rootsBox.y1) < -20) return;
+  const cmC = camMatrix(DPR);
+  cx.globalAlpha = 1; cx.fillStyle = '#8E6A4E';
+  if (introDone) { cx.setTransform(...cmC); cx.fill(rootsAll); }
+  else for (const s of rootSegs) { if (s.g < 0.003) continue; setT(cx, cmC, s.M); cx.fill(s.path); }
+  // One small tip per day practised.
+  cx.setTransform(DPR, 0, 0, DPR, 0, 0); cx.fillStyle = '#6E4D37';
+  const r = Math.max(1.2, 1.6 * cam.z);
+  cx.beginPath();
+  for (const t of rootTips) {
+    if (t.seg.g < 0.95) continue;
+    const p = apply(t.seg.M, t.p.x - t.seg.B.x, t.p.y - t.seg.B.y), x = sx(p.x), y = sy(p.y);
+    cx.moveTo(x + r, y); cx.arc(x, y, r, 0, TAU);
+  }
+  cx.fill();
+}
+function drawSeed(now) {
+  const a = begun ? 1 - prog(introT, 1.3, 1.0) : 1;
+  if (a <= 0) return;
+  const x = sx(0), y = sy(-3), r = Math.max(3, 5 * cam.z);
+  cx.setTransform(DPR, 0, 0, DPR, 0, 0); cx.globalAlpha = a;
+  cx.fillStyle = '#8E6A4E'; cx.beginPath(); cx.ellipse(x, y, r, r * 0.72, -0.4, 0, TAU); cx.fill();
+}
+function drawParticles() {
+  if (petals.length) {
+    cx.setTransform(...camMatrix(DPR));
+    for (const p of petals) {
+      const fade = p.rest > 0 ? 1 - p.rest / 1.8 : Math.min(1, p.life * 3);
+      cx.globalAlpha = 0.85 * fade; cx.fillStyle = p.col;
+      cx.save(); cx.translate(p.x, p.y); cx.rotate(p.rot); cx.scale(p.s, p.s * (0.45 + 0.4 * Math.abs(Math.sin(p.life * 4 + p.flut))));
+      cx.fill(CIRCLE); cx.restore();
+    }
+  }
+  cx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  for (const r of rings) {
+    if (r.life < 0) continue;
+    const t = easeOut(r.life / r.max), x = sx(r.l.v.wx), y = sy(r.l.v.wy);
+    cx.globalAlpha = (1 - t) * 0.9; cx.strokeStyle = r.col; cx.lineWidth = Math.max(1.5, (1 - t) * 2.5 * cam.z);
+    cx.beginPath(); cx.arc(x, y, (r.r0 + t * r.r1) * cam.z, 0, TAU); cx.stroke();
+  }
+}
+
+// ── Labels (screen space; never overlapping text or the safe zones) ──
+let placed = [];
+const overlaps = (b) => placed.some((p) => b[0] < p[2] && b[2] > p[0] && b[1] < p[3] && b[3] > p[1]);
+function drawLabel(spec, { alpha = 1, color = C.ink, subColor = C.muted, halo = C.foam, force = false }) {
+  if (alpha < 0.03) return false;
+  const m = measure(spec.title, spec.sub, spec.maxW, spec.dot, spec.small);
+  const ax = sx(spec.wx), ay = sy(spec.wy), r = relBox(spec.dir, spec.gap, m);
+  let left = clamp(ax + r[0], 8, W - m.w - 8), top = clamp(ay + r[1], 8, H - m.h - 8);
+  let box = [left - 4, top - 2, left + m.w + 4, top + m.h + 2];
+  if (!force && overlaps(box)) {
+    // Slide along the label's side (never onto other text) before giving up.
+    const vert = Math.abs(spec.dir.x) >= Math.abs(spec.dir.y);
+    const shifts = vert ? [0.6, -0.6, 1.1, -1.1].map((k) => [0, k * m.h]) : [0.35, -0.35, 0.7, -0.7].map((k) => [k * m.w, 0]);
+    const ok = shifts.map(([dx, dy]) => [clamp(left + dx, 8, W - m.w - 8), clamp(top + dy, 8, H - m.h - 8)])
+      .find(([l, t]) => !overlaps([l - 4, t - 2, l + m.w + 4, t + m.h + 2]));
+    if (!ok) return false;
+    [left, top] = ok; box = [left - 4, top - 2, left + m.w + 4, top + m.h + 2];
+  }
+  placed.push(box);
+  cx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  cx.globalAlpha = alpha; cx.textBaseline = 'top'; cx.lineJoin = 'round';
+  const align = spec.dir.x > 0.34 ? 'left' : spec.dir.x < -0.34 ? 'right' : 'center';
+  const dl = m.dot ? 16 : 0, tw = m.w - dl, tx0 = left + dl;
+  const xFor = (w) => (align === 'left' ? tx0 : align === 'right' ? tx0 + tw - w : tx0 + (tw - w) / 2);
+  cx.font = m.font;
+  m.lines.forEach((l, i) => {
+    const lx = xFor(m.widths[i]), ly = top + i * m.lh + 1;
+    cx.lineWidth = 4; cx.strokeStyle = halo; cx.strokeText(l, lx, ly);
+    cx.fillStyle = color; cx.fillText(l, lx, ly);
+  });
+  if (m.dot) { cx.fillStyle = spec.dot; cx.beginPath(); cx.arc(xFor(m.widths[0]) - 10, top + m.lh / 2, 4, 0, TAU); cx.fill(); }
+  if (spec.sub) {
+    cx.font = F_SUB;
+    const lx = xFor(m.sw), ly = top + m.lh * m.lines.length + 1;
+    cx.lineWidth = 4; cx.strokeStyle = halo; cx.strokeText(spec.sub, lx, ly);
+    cx.fillStyle = subColor; cx.fillText(spec.sub, lx, ly);
+  }
+  return box;
+}
+function roundRect(ctx, x, y, w, h, r) { ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(x, y, w, h, r); else ctx.rect(x, y, w, h); }
+const stateColor = (l) => (l.state === 'mastered' ? '#2E8A55' : l.state === 'frontier' ? '#8A6D00' : C.muted);
+
+function drawLabels() {
+  placed = zones.slice();
+  if (!introDone && introT < 6.95) return;
+  const appear = introDone ? 1 : prog(introT, 6.95, 0.5);
+  const F = focus;
+  if (F === root || leanNode && domains.includes(leanNode)) {
+    for (const d of domains) {
+      const a = (1 - (leanNode === d ? d.v.prox : 0)) * root.v.fT * appear;
+      drawLabel(domainLabelSpec(d), { alpha: a, force: a > 0.5 && F === root });
+    }
+  }
+  // Lesson labels: only when a branch is zoomed in (or being leaned into from its limb).
+  for (const sp of nodes) {
+    if (!isSpine(sp)) continue;
+    let a = 0;
+    if (F === sp || (F === sp.parent && sp.parent.depth >= 2)) a = F.v.fT;
+    if (leanNode === sp && leanType === 'in') a = Math.max(a, sp.v.prox);
+    if (leanNode === sp.parent && leanType === 'in' && sp.parent.depth >= 2) a = Math.max(a, leanNode.v.prox);
+    if (a < 0.03) continue;
+    const ls = [...sp.children].sort((p, q) => (q.state === 'frontier') - (p.state === 'frontier'));
+    for (const l of ls) {
+      if (l === hoverLeaf) continue;
+      drawLabel(lessonLabelSpec(l, true), { alpha: a * appear * l.v.vis, color: l.state === 'locked' ? C.muted : C.ink, subColor: stateColor(l) });
+    }
+  }
+  // Topic labels at limb zoom (or while leaning into a limb from the whole tree).
+  for (const t of nodes) {
+    if (t.depth < 2 || !t.children.length) continue;
+    let a = 0;
+    if (F === t.domain) a = t.domain.v.fT;
+    else if (F === root && leanNode === t.domain) a = t.domain.v.prox * 0.9;
+    if (a < 0.03 || (isSpine(t) && (leanNode === t || leanNode === t.parent))) continue;
+    drawLabel(topicLabelSpec(t, true), { alpha: a * appear * t.v.vis, color: t.v.alive ? C.ink : C.muted });
+  }
+  // Roots: only when you lean down into them.
+  const rootsA = Math.max(ROOTS.v.fT, ROOTS.v.prox);
+  if (rootsA > 0.03) {
+    drawLabel({ wx: 0, wy: -26, dir: P2(0, -1), gap: 0, title: ROOTS_LINE, maxW: 600 }, { alpha: rootsA, force: true });
+    if (ROOTS.v.fT > 0.05) {
+      for (const s of labelSetFor(ROOTS)) {
+        const t = rootTips.find((x) => x.label && x.label[0] === s.title);
+        const p = apply(t.seg.M, t.p.x - t.seg.B.x, t.p.y - t.seg.B.y);
+        drawLabel({ ...s, wx: p.x, wy: p.y }, { alpha: ROOTS.v.fT, color: C.ink, subColor: C.muted, halo: '#EEF1F4' });
+      }
+    }
+  }
+}
+
+let pillPos = null;
+function backPill() { return pillPos || placePill([]); }
+function placePill(avoid) {
+  let px, py, text;
+  if (focus.isRoots) { text = '‹ Back to the tree'; px = W / 2; py = Math.max(VP.y + 16, sy(-110)); }
+  else {
+    const s = baseScreen(focus);
+    text = '‹ ' + (focus.parent === root ? 'Whole tree' : focus.parent.label);
+    px = s.x; py = s.y;
+  }
+  cx.font = F_NAME;
+  const w = cx.measureText(text).width + 32, h = 32;
+  px = clamp(px, VP.x + w / 2, VP.x + VP.w - w / 2); py = clamp(py, VP.y + h / 2, VP.y + VP.h - h / 2);
+  const hits = (y) => avoid.some((b) => px - w / 2 - 4 < b[2] && px + w / 2 + 4 > b[0] && y - h / 2 - 4 < b[3] && y + h / 2 + 4 > b[1]);
+  if (hits(py)) {
+    for (let k = 1; k <= 12; k++) {
+      const up = py - k * 12, dn = py + k * 12;
+      if (up - h / 2 >= VP.y && !hits(up)) { py = up; break; }
+      if (dn + h / 2 <= VP.y + VP.h && !hits(dn)) { py = dn; break; }
+    }
+  }
+  return { px, py, w, h, text };
+}
+function drawBackPill() {
+  if (!introDone || focus === root) { pillPos = null; return; }
+  pillPos = placePill(placed);
+  const { px, py, w, h, text } = pillPos;
+  placed.push([px - w / 2 - 4, py - h / 2 - 4, px + w / 2 + 4, py + h / 2 + 4]);
+  const hot = Math.max(hoverPill ? 1 : 0, leanType === 'out' && leanNode ? leanNode.v.prox : 0);
+  cx.setTransform(DPR, 0, 0, DPR, 0, 0); cx.globalAlpha = 1;
+  cx.fillStyle = hot > 0.5 ? C.waveShadow : '#CBDFF0'; roundRect(cx, px - w / 2, py - h / 2 + 3, w, h, 16); cx.fill();
+  cx.fillStyle = hot > 0.5 ? C.wave3 : C.foam; roundRect(cx, px - w / 2, py - h / 2, w, h, 16); cx.fill();
+  if (hot <= 0.5) { cx.lineWidth = 2; cx.strokeStyle = C.mist; roundRect(cx, px - w / 2 + 1, py - h / 2 + 1, w - 2, h - 2, 15); cx.stroke(); }
+  cx.font = F_NAME; cx.fillStyle = hot > 0.5 ? C.foam : C.ink; cx.textAlign = 'center'; cx.textBaseline = 'middle';
+  cx.fillText(text, px, py + 1);
+  cx.textAlign = 'left';
+}
+
+let blurUsed = false, blurShown = true;
+function draw(now) {
+  drawBackground();
+  cx.setTransform(1, 0, 0, 1, 0, 0); cx.clearRect(0, 0, crisp.width, crisp.height);
+  if (blurUsed || blurShown) { bx.setTransform(1, 0, 0, 1, 0, 0); bx.clearRect(0, 0, blurC.width, blurC.height); }
+  blurUsed = false;
+  const cmC = camMatrix(DPR), cmB = camMatrix(BLUR_RES);
+  drawRoots();
+  drawSeed(now);
+  for (const n of order) {
+    const v = n.v;
+    if (!n.children.length && !nodeVisible(v, 80)) continue;
+    if (v.sharp > 0.01) drawBranch(cx, cmC, v, v.vis * v.sharp);
+    if (v.sharp < 0.99) drawBranch(bx, cmB, v, v.vis * (1 - v.sharp));
+  }
+  for (const n of order) {
+    const v = n.v;
+    if (!v.fol) continue;
+    if (v.sharp > 0.01) drawFoliage(cx, cmC, n, v.vis * v.sharp);
+    if (v.sharp < 0.99) drawFoliage(bx, cmB, n, v.vis * (1 - v.sharp));
+  }
+  drawHalos(bx, BLUR_RES, now);
+  drawHalos(cx, DPR, now);
+  for (const l of leaves) {
+    const v = l.v;
+    if (!nodeVisible(v, 60)) continue;
+    if (v.sharp > 0.01) drawLesson(cx, cmC, l, v.vis * v.sharp, now);
+    if (v.sharp < 0.99) drawLesson(bx, cmB, l, v.vis * (1 - v.sharp), now);
+  }
+  drawParticles();
+  drawLabels();
+  drawBackPill();
+  cx.globalAlpha = 1; bx.globalAlpha = 1;
+  // The CSS blur is the costliest thing on screen; only composite that layer when it holds something.
+  if (blurUsed !== blurShown) { blurShown = blurUsed; blurC.style.visibility = blurUsed ? 'visible' : 'hidden'; }
+}
+
+// ───────────────────────── HUD + tooltip ─────────────────────────
+const $ = (id) => document.getElementById(id);
+const hintEl = $('hint'), tipEl = $('tip'), skipEl = $('skip'), hudEl = document.querySelector('.hud-panel');
+const hud = { count: 0, anim: null };
+function hudTargets(count) {
+  const st = graph.stats(), frac = st.mastered ? count / st.mastered : 1;
+  return { count, score: projectedScore(st.mastery * frac), total: st.total };
+}
+function renderHud(v) {
+  $('hudCount').textContent = String(Math.round(v.count));
+  $('hudTotal').textContent = String(v.total);
+  $('hudScore').textContent = String(Math.round(v.score / 10) * 10);
+}
+function tweenHud(from, to, ms) { hud.anim = { from, to, t0: performance.now(), ms }; }
+function stepHud(now) {
+  if (!hud.anim) return;
+  const { from, to, t0, ms } = hud.anim, e = easeOut(clamp((now - t0) / ms, 0, 1));
+  renderHud({ count: lerp(from.count, to.count, e), score: lerp(from.score, to.score, e), total: to.total });
+  if (e >= 1) hud.anim = null;
+}
+
+let hintState = 0; // 0 = not shown yet, 1 = showing, 2 = done for good
+function showHint() { if (hintState) return; hintState = 1; hintEl.classList.add('show'); setTimeout(hideHint, 4000); }
+function hideHint() { if (hintState === 2) return; if (hintState === 1) hintEl.classList.remove('show'); hintState = hintState ? 2 : 0; }
+
+let tipNode = null;
+function updateTip() {
+  if (hoverLeaf !== tipNode) {
+    tipNode = hoverLeaf;
+    if (tipNode) {
+      const l = tipNode;
+      const status = l.state === 'mastered' ? lessonSub(l) : l.state === 'frontier' ? (l.progress > 0 ? `${pct(l.progress)} done · click to continue` : 'Ready · click to grow it') : graph.blockerText(l);
+      tipEl.innerHTML = '<div class="k"><i></i><span></span></div><b></b><small></small>';
+      tipEl.querySelector('.k i').style.background = PAL[l.domain.label].hue;
+      tipEl.querySelector('.k span').textContent = `${l.domain.label} · ${l.parent.label}`;
+      tipEl.querySelector('b').textContent = l.label;
+      const sm = tipEl.querySelector('small'); sm.textContent = status; sm.className = l.state;
+    }
+    tipEl.classList.toggle('show', !!tipNode);
+  }
+  if (tipNode) {
+    // Beside the leaf (not under the cursor); flips to stay on screen and clear of the dock.
+    const s = tipNode.v.scr, w = tipEl.offsetWidth, h = tipEl.offsetHeight, gap = Math.max(12, s.r + 8);
+    const cands = [[s.x + gap, s.y - h / 2], [s.x - gap - w, s.y - h / 2], [s.x - w / 2, s.y - gap - h], [s.x - w / 2, s.y + gap]];
+    const fits = ([x, y]) => x >= 8 && y >= 8 && x + w <= W - 8 && y + h <= H - 8;
+    const clear = ([x, y]) => !placed.some((b) => x < b[2] && x + w > b[0] && y < b[3] && y + h > b[1]);
+    let [x, y] = cands.find((c) => fits(c) && clear(c)) || cands.find(fits) || cands[0];
+    x = clamp(x, 8, W - w - 8); y = clamp(y, 8, H - h - 8);
+    tipEl.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`;
+  }
+}
+
+// ───────────────────────── Completion ─────────────────────────
+function onLessonComplete(evt) {
+  if (!evt) return;
+  const { lesson, unlocked } = evt;
+  const before = hudTargets(hud.count);
+  computeWidths();
+  for (const n of nodes) { buildBranchPath(n.v, n === root ? 40 : n.depth === 1 ? 30 : !n.children.length ? 8 : 22); if (!n.children.length) n.v.tipL = sub(n.v.tip, n.v.B); buildFoliage(n); }
+  const rr = mulberry32(31); for (const n of nodes) if (n.depth <= 1) buildGrain(n.v, n === root ? 9 : 4, rr);
+  buildRoots();
+  stateVersion++; measured.clear();
+  lesson.v.bloomAt = time; lesson.v.budAt = null;
+  // The bud bursts into a blossom (the card plays the 'complete' sound right now).
+  for (let i = 0; i < (reduceMotion ? 0 : 10); i++) spawnPetal(lesson, true);
+  rings.push({ l: lesson, r0: 6, r1: 36, col: PAL[lesson.domain.label].hue, life: 0, max: 0.8 });
+  unlocked.forEach((l, i) => {
+    const delay = 0.7 + i * 0.2;
+    l.v.budAt = time + delay;
+    setTimeout(() => { rings.push({ l, r0: 4, r1: 28, col: C.sunShadow, life: 0, max: 0.8 }); sfx('unlock'); }, delay * 1000);
+  });
+  hud.count = graph.stats().mastered;
+  tweenHud(before, hudTargets(hud.count), 900);
+  setI(0.85, 0.6);
+  setTimeout(() => setI(0.42 + 0.07 * Math.min(3, focus.depth || 0), 4), 2400);
+  if (!(card.lesson && W < 900)) caption(`${lesson.label} is grown.`, 3200);
+}
+
+// ───────────────────────── Intro ─────────────────────────
+const EVENTS = [
+  { t: 0.05, fn: () => setI(0.12, 0.6) },
+  { t: 1.25, fn: () => setI(0.32, 1.6) },
+  { t: 2.75, fn: () => setI(0.58, 1.6) },
+  { t: 4.15, fn: () => { setI(0.95, 2.7); sfx('riser'); } },
+  { t: INTRO_END, fn: () => {
+    sfx('intro'); setI(0.45, 6); breathAt = time;
+    caption(`${graph.stats().mastered} leaves. Every one grown by you.`, 3800);
+  } },
+];
+let lastTickCount = 0;
+function startIntro() {
+  if (begun) return;
+  begun = true;
+  introStart = performance.now() - (reduceMotion ? Math.max(T_SKIP, INTRO_END - 0.02) : T_SKIP) * 1000;
+  introSkipped = reduceMotion || T_SKIP >= INTRO_END;
+  if (T_SKIP > 0 || reduceMotion) for (const e of EVENTS) if (e.t < (reduceMotion && T_SKIP < INTRO_END ? INTRO_END - 0.01 : T_SKIP)) e.done = true;
+  for (const l of leaves) if (l.v.popT < (reduceMotion ? 99 : T_SKIP)) l.v.stepped = true;
+  if (introSkipped) setI(0.45, 0.5);
+  skipEl.hidden = introSkipped;
+}
+function skipIntro() {
+  if (introDone) return;
+  introStart = performance.now() - (INTRO_END - 0.05) * 1000;
+  for (const e of EVENTS) if (e.t < INTRO_END - 0.1) e.done = true;
+  for (const l of leaves) l.v.stepped = true;
+}
+skipEl.addEventListener('click', skipIntro);
+function stepIntro(now) {
+  if (!begun) { introT = 0; return; }
+  introT = (now - introStart) / 1000;
+  for (const e of EVENTS) if (!e.done && introT >= e.t) { e.done = true; e.fn(); }
+  if (!introDone && introT >= INTRO_END + 0.35) {
+    introDone = true; skipEl.hidden = true;
+    if (!Q.get('demo') && !Q.has('mx')) showHint();
+    hud.count = graph.stats().mastered;
+    renderHud(hudTargets(hud.count));
+    runDemo();
+  }
+  if (!introDone) {
+    // Each leaf pops in with its own little 'step'; the counter follows.
+    let c = 0;
+    for (const l of leaves) {
+      if (l.state !== 'mastered' || introT < l.v.popT) continue;
+      c++;
+      if (!l.v.stepped) { l.v.stepped = true; sfx('step', { rate: 0.9 + 0.35 * (c / 48) }); }
+    }
+    if (c !== lastTickCount) { lastTickCount = c; renderHud(hudTargets(c)); }
+    if (introT > 0.6 && introT < INTRO_END) skipEl.hidden = false;
+  }
+}
+
+// ───────────────────────── Input ─────────────────────────
+// A "move" is one continuous gesture: it ends when the hand pauses (>140ms) or turns (>60°).
+function movePointer(x, y, now) {
+  const dx = x - pointer.x, dy = y - pointer.y, d = Math.hypot(dx, dy);
+  if (pointer.in && d > 0.5) {
+    if (now - pointer.lastMoveAt > 140) pointer.move++;
+    if (d > 2) {
+      const ux = dx / d, uy = dy / d;
+      if (pointer.dirX || pointer.dirY) { if (ux * pointer.dirX + uy * pointer.dirY < 0.5) pointer.move++; }
+      pointer.dirX = lerp(pointer.dirX, ux, 0.35); pointer.dirY = lerp(pointer.dirY, uy, 0.35);
+      const l = Math.hypot(pointer.dirX, pointer.dirY) || 1; pointer.dirX /= l; pointer.dirY /= l;
+    }
+    pointer.lastMoveAt = now; if (now >= lockUntil) pointer.travel += d;
+  }
+  pointer.x = x; pointer.y = y; pointer.in = true;
+}
+crisp.addEventListener('pointermove', (e) => {
+  if (e.pointerType === 'touch') return;
+  if (hintState === 1 && pointer.in && Math.hypot(e.clientX - pointer.x, e.clientY - pointer.y) > 3) setTimeout(hideHint, 700);
+  pointer.sim = false; pointer.overUI = false; forcedHover = null;
+  movePointer(e.clientX, e.clientY, performance.now());
+});
+crisp.addEventListener('pointerleave', (e) => {
+  // Onto UI (dock, card, status): freeze in place. Out of the window: let the camera relax.
+  if (e.relatedTarget && e.relatedTarget !== document.documentElement) pointer.overUI = true;
+  else pointer.in = false;
+});
+crisp.addEventListener('pointerenter', () => { pointer.overUI = false; });
+crisp.addEventListener('pointerup', (e) => {
+  if (!introDone) return;
+  const touch = e.pointerType === 'touch';
+  if (touch) { pointer.x = e.clientX; pointer.y = e.clientY; pointer.in = true; pointer.overUI = false; }
+  if (overPill()) { goBack(); if (touch) pointer.in = false; return; }
+  const l = touch ? findHoverLeaf() : hoverLeaf;
+  if (l && (!touch || l.v.scr.r > 7 || focus.depth >= 2)) { card.open(l); if (touch) pointer.in = false; return; }
+  const hit = evalPointer();
+  if (touch) {
+    pointer.in = false;
+    if (hit && hit.inside && hit.type !== 'out') setFocus(hit.node);
+    else goBack();
+    return;
+  }
+  if (hit && hit.inside && (hit.type === 'in' || hit.type === 'roots')) setFocus(hit.node);
+});
+addEventListener('keydown', (e) => {
+  if (card.lesson) return;                       // the card handles its own Escape
+  if ((e.key === 'Escape' || e.key === 'Backspace') && introDone) { e.preventDefault(); goBack(); }
+  if ((e.key === ' ' || e.key === 'Enter') && !introDone && begun && document.activeElement === document.body) skipIntro();
+}, true);
+
+// ───────────────────────── QA demos ─────────────────────────
+function runDemo() {
+  const d = Q.get('demo');
+  const D = domains[clamp(parseInt(Q.get('d') || '0', 10) || 0, 0, domains.length - 1)];
+  if (Q.has('mx')) { pointer.x = parseFloat(Q.get('mx')); pointer.y = parseFloat(Q.get('my') || '0'); pointer.in = true; pointer.sim = Q.has('commit'); pointer.lastMoveAt = 1e12; }
+  if (!d) return;
+  if (d === 'limb') setFocus(D);
+  else if (d === 'topic') setFocus(D.children[clamp(parseInt(Q.get('k') || '0', 10) || 0, 0, D.children.length - 1)]);
+  else if (d === 'roots') setFocus(ROOTS);
+  else if (d === 'hover') { const l = leaves.find((x) => x.state === 'frontier' && x.domain === D); setFocus(l.parent); setTimeout(() => { forcedHover = l; }, 700); }
+  else if (d === 'complete') {
+    const l = leaves.find((x) => x.state === 'frontier' && x.domain === D);
+    setFocus(l.parent);
+    setTimeout(() => card.open(l), 500);
+    setTimeout(() => card.el.querySelector('.actions .kg-btn.primary')?.click(), 1000);
+  }
+}
+
+// ───────────────────────── Loop + frame timing ─────────────────────────
+renderHud(hudTargets(0));
+VP = viewport();
+{ const k = introCam(frameFor(root)); cam.x = k.x; cam.y = k.y; cam.z = k.z; }
+document.fonts?.ready.then(() => { measured.clear(); frameCache.clear(); });
+let last = performance.now();
+// ?vt=1: CLI screenshots under --virtual-time-budget tick rAF only a few times, so the simulation
+// runs on a timer there and rAF just paints.
+const VIRTUAL = Q.has('vt');
+const perf = { work: [], frames: [], lastFrame: 0 };
+function step(now) {
+  const total = Math.min(VIRTUAL ? 0.25 : 0.05, Math.max(0, now - last) / 1000);
+  const steps = Math.max(1, Math.ceil(total / (1 / 60) - 1e-6)), dt = total / steps;
+  last = clock = now;
+  VP = viewport();
+  readZones();
+  for (let i = 0; i < steps; i++) {
+    time += dt;
+    stepIntro(now);
+    updateWind(dt);
+    animate(dt);
+    updateMatrices();
+    handlePointer(now);
+    computeTargets();
+    updateParticles(dt);
+  }
+  stepHud(now);
+}
+function frameLoop(now) {
+  const t0 = performance.now();
+  step(now);
+  draw(now);
+  const t1 = performance.now();
+  perf.work.push(t1 - t0); if (perf.work.length > 240) perf.work.shift();
+  if (perf.lastFrame) { perf.frames.push(now - perf.lastFrame); if (perf.frames.length > 240) perf.frames.shift(); }
+  perf.lastFrame = now;
+  requestAnimationFrame(frameLoop);
+}
+if (VIRTUAL) {
+  setInterval(() => step(performance.now()), 16);
+  const paint = () => { draw(performance.now()); requestAnimationFrame(paint); };
+  requestAnimationFrame(paint);
+} else requestAnimationFrame(frameLoop);
+const stat = (a) => { const s = [...a].sort((x, y) => x - y); return { avg: +(a.reduce((x, y) => x + y, 0) / Math.max(1, a.length)).toFixed(2), p95: +(s[Math.floor(s.length * 0.95)] || 0).toFixed(2), max: +(s[s.length - 1] || 0).toFixed(2) }; };
+window.__tree = {
+  graph, nodes, ROOTS, cam, setFocus, goBack, card, pointer, skipIntro,
+  get focus() { return focus; }, get hoverLeaf() { return hoverLeaf; },
+  perf: () => ({ workMs: stat(perf.work), frameMs: stat(perf.frames) }),
+  labelBoxes: () => placed.slice(zones.length),
+  sfxLog: () => sfxLog.slice(),
+};
+</script>
+</body>
+</html>
